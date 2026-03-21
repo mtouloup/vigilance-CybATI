@@ -1,0 +1,227 @@
+from __future__ import annotations
+
+from dataclasses import asdict, is_dataclass
+from datetime import date, datetime
+from typing import Any
+
+from flask import Flask, jsonify, request
+
+from .repository import (
+    AssetListQuery,
+    AssetNotFoundError,
+    AssetPage,
+    AssetRepository,
+    AssetSchemaView,
+    AssetSort,
+    RepositoryError,
+    UnsupportedCategoryError,
+    UnsupportedVocabularyError,
+)
+from .service import AssetService
+from .validation import ValidationError
+
+
+def create_app(service: AssetService | None = None, *, repository: AssetRepository | None = None) -> Flask:
+    """Create the Flask application for the asset inventory read API."""
+
+    if service is None:
+        if repository is None:
+            raise ValueError("Either service or repository must be provided.")
+        service = AssetService(repository)
+
+    app = Flask(__name__)
+    app.config["ASSET_SERVICE"] = service
+
+    @app.get("/assets")
+    def list_assets() -> Any:
+        query = _build_asset_list_query(request.args, service.repository)
+        page = service.list_assets(query)
+        return _success_response(
+            data={
+                "items": [_serialize_asset(item) for item in page.items],
+            },
+            meta={
+                "page": page.page,
+                "page_size": page.page_size,
+                "total": page.total,
+                "returned": len(page.items),
+                "filters": dict(query.filters),
+                "search": query.search,
+                "sort": [asdict(sort) for sort in query.sort],
+            },
+        )
+
+    @app.get("/assets/<asset_id>")
+    def get_asset(asset_id: str) -> Any:
+        asset = service.get_asset(asset_id)
+        return _success_response(data=_serialize_asset(asset))
+
+    @app.get("/vocabularies")
+    def get_vocabularies() -> Any:
+        vocabularies = service.get_vocabularies()
+        return _success_response(
+            data={name: list(values) for name, values in vocabularies.items()},
+            meta={"total": len(vocabularies)},
+        )
+
+    @app.get("/vocabularies/<name>")
+    def get_vocabulary(name: str) -> Any:
+        values = service.get_vocabulary(name)
+        return _success_response(
+            data={"name": name, "values": list(values)},
+            meta={"total": len(values)},
+        )
+
+    @app.get("/schema/assets")
+    def get_asset_schema() -> Any:
+        schema_view = service.get_asset_schema()
+        return _success_response(data=_serialize_schema_view(schema_view))
+
+    @app.get("/schema/assets/<category>")
+    def get_category_schema(category: str) -> Any:
+        schema_view = service.get_category_schema(category)
+        return _success_response(data=_serialize_schema_view(schema_view))
+
+    @app.errorhandler(AssetNotFoundError)
+    def handle_not_found(error: AssetNotFoundError) -> Any:
+        return _error_response(
+            status=404,
+            code="asset_not_found",
+            message=str(error),
+        )
+
+    @app.errorhandler(UnsupportedVocabularyError)
+    def handle_unknown_vocabulary(error: UnsupportedVocabularyError) -> Any:
+        return _error_response(
+            status=404,
+            code="unsupported_vocabulary",
+            message=str(error),
+        )
+
+    @app.errorhandler(UnsupportedCategoryError)
+    def handle_unknown_category(error: UnsupportedCategoryError) -> Any:
+        return _error_response(
+            status=404,
+            code="unsupported_category",
+            message=str(error),
+        )
+
+    @app.errorhandler(ValidationError)
+    def handle_validation_error(error: ValidationError) -> Any:
+        return _error_response(
+            status=400,
+            code="validation_error",
+            message="Request validation failed.",
+            details=[asdict(issue) for issue in error.issues],
+        )
+
+    @app.errorhandler(ValueError)
+    def handle_bad_request(error: ValueError) -> Any:
+        return _error_response(
+            status=400,
+            code="invalid_request",
+            message=str(error),
+        )
+
+    @app.errorhandler(RepositoryError)
+    def handle_repository_error(error: RepositoryError) -> Any:
+        return _error_response(
+            status=500,
+            code="repository_error",
+            message=str(error),
+        )
+
+    return app
+
+
+def _build_asset_list_query(args: Any, repository: AssetRepository) -> AssetListQuery:
+    page = _parse_positive_int(args.get("page", "1"), field="page")
+    page_size = _parse_positive_int(args.get("page_size", "50"), field="page_size")
+    search = args.get("search") or None
+
+    filters: dict[str, Any] = {}
+    for field in repository.catalog.filterable_fields:
+        values = [value for value in args.getlist(field) if value != ""]
+        if not values:
+            continue
+        filters[field] = values[0] if len(values) == 1 else tuple(values)
+
+    sort = _parse_sort(args.getlist("sort"), repository)
+    return AssetListQuery(filters=filters, search=search, sort=sort, page=page, page_size=page_size)
+
+
+def _parse_sort(raw_sort_values: list[str], repository: AssetRepository) -> tuple[AssetSort, ...]:
+    sortable_fields = set(repository.catalog.sortable_fields)
+    parsed: list[AssetSort] = []
+    for raw_value in raw_sort_values:
+        for part in raw_value.split(","):
+            token = part.strip()
+            if not token:
+                continue
+            direction = "desc" if token.startswith("-") else "asc"
+            field = token[1:] if token[:1] in {"-", "+"} else token
+            if field not in sortable_fields:
+                raise ValueError(f"Invalid sort field: {field}")
+            parsed.append(AssetSort(field=field, direction=direction))
+    return tuple(parsed)
+
+
+def _parse_positive_int(raw_value: str, *, field: str) -> int:
+    try:
+        value = int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be a positive integer.") from exc
+    if value < 1:
+        raise ValueError(f"{field} must be a positive integer.")
+    return value
+
+
+def _serialize_asset(asset: Any) -> dict[str, Any]:
+    payload = asset.to_dict()
+    return {key: _serialize_value(value) for key, value in payload.items()}
+
+
+def _serialize_schema_view(schema_view: AssetSchemaView) -> dict[str, Any]:
+    return {
+        "id_field": schema_view.id_field,
+        "common_fields": [_serialize_dataclass(field) for field in schema_view.common_fields],
+        "category_fields": {
+            category: [_serialize_dataclass(field) for field in fields]
+            for category, fields in schema_view.category_fields.items()
+        },
+        "vocabularies": {name: list(values) for name, values in schema_view.vocabularies.items()},
+    }
+
+
+def _serialize_dataclass(instance: Any) -> Any:
+    if is_dataclass(instance):
+        return {key: _serialize_value(value) for key, value in asdict(instance).items()}
+    return _serialize_value(instance)
+
+
+def _serialize_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        return value.isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
+    if isinstance(value, tuple):
+        return [_serialize_value(item) for item in value]
+    if isinstance(value, list):
+        return [_serialize_value(item) for item in value]
+    if isinstance(value, dict):
+        return {key: _serialize_value(item) for key, item in value.items()}
+    return value
+
+
+def _success_response(*, data: Any, meta: dict[str, Any] | None = None, status: int = 200):
+    response = {"data": data, "error": None}
+    if meta is not None:
+        response["meta"] = meta
+    return jsonify(response), status
+
+
+def _error_response(*, status: int, code: str, message: str, details: list[dict[str, Any]] | None = None):
+    error: dict[str, Any] = {"code": code, "message": message}
+    if details is not None:
+        error["details"] = details
+    return jsonify({"data": None, "error": error}), status
