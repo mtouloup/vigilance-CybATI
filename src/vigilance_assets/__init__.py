@@ -27,6 +27,20 @@ from .repository import (
 )
 from .schema import AssetSchemaCatalog, load_schema_catalog
 from .api import create_app
+from .config import (
+    AppRuntimeSettings,
+    ConfigurationError,
+    GoogleSheetsSettings,
+    SpreadsheetBackendSettings,
+    WorkbookSettings,
+    load_runtime_settings,
+)
+from .infrastructure import (
+    DEFAULT_GATEWAY_FACTORIES,
+    SpreadsheetGatewayFactoryError,
+    SpreadsheetGatewayFactoryRegistry,
+    build_spreadsheet_repository,
+)
 from .service import AssetService
 from .spreadsheet import ASSETS_SHEET_NAME, AssetSpreadsheetMapper, SheetRecord, SpreadsheetBackendError, SpreadsheetTableGateway
 from .validation import (
@@ -49,7 +63,17 @@ __all__ = [
     "AssetSort",
     "AssetSchemaCatalog",
     "AssetService",
+    "build_spreadsheet_repository",
     "create_app",
+    "AppRuntimeSettings",
+    "ConfigurationError",
+    "DEFAULT_GATEWAY_FACTORIES",
+    "GoogleSheetsSettings",
+    "SpreadsheetBackendSettings",
+    "SpreadsheetGatewayFactoryError",
+    "SpreadsheetGatewayFactoryRegistry",
+    "WorkbookSettings",
+    "load_runtime_settings",
     "ASSETS_SHEET_NAME",
     "AssetSpreadsheetMapper",
     "AssetValidationSummary",
