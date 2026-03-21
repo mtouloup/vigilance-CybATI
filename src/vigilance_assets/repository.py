@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
-from typing import Literal, Mapping, Sequence
+from typing import Any, Literal, Mapping, Sequence
 
 from .models import AssetRecord, build_asset_record
 from .schema import AssetSchemaCatalog, FieldDefinition, load_schema_catalog
@@ -36,6 +36,15 @@ class AssetListQuery:
     page: int = 1
     page_size: int = 50
 
+
+
+
+@dataclass(frozen=True, slots=True)
+class InventoryPayload:
+    """Schema-keyed inventory payload used for non-mutating quality analysis."""
+
+    payload: Mapping[str, Any]
+    row_number: int | None = None
 
 @dataclass(frozen=True, slots=True)
 class AssetPage:
@@ -115,6 +124,12 @@ class AssetRepository(ABC):
         The default mode is ``archive`` so implementations can support soft
         deletion even when a physical delete is undesirable.
         """
+
+    def iter_inventory_payloads(self) -> tuple[InventoryPayload, ...]:
+        """Return schema-keyed inventory payloads for quality/reporting workflows."""
+
+        page = self.list_assets(AssetListQuery(page=1, page_size=10_000))
+        return tuple(InventoryPayload(payload=asset.to_dict()) for asset in page.items)
 
     def get_vocabularies(self) -> Mapping[str, tuple[str, ...]]:
         """Return all controlled vocabularies defined by the canonical schema."""
@@ -214,6 +229,12 @@ class SpreadsheetAssetRepository(AssetRepository):
             gateway.update_row(self.mapper.sheet_name, row_number, self.mapper.asset_to_row(archived_asset))
             return
         raise AssetNotFoundError(asset_id)
+
+    def iter_inventory_payloads(self) -> tuple[InventoryPayload, ...]:
+        return tuple(
+            InventoryPayload(payload=self.mapper.row_to_payload(record.values), row_number=record.row_number)
+            for record in self._require_gateway().list_rows(self.mapper.sheet_name)
+        )
 
     def _load_sheet_rows(self) -> list[tuple[int, AssetRecord]]:
         gateway = self._require_gateway()

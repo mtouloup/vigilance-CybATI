@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections import Counter
 from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from typing import Any
@@ -12,7 +13,13 @@ from .repository import (
     AssetSchemaView,
     DeleteMode,
 )
-from .validation import AssetValidator, ValidationError, ValidationIssue
+from .validation import (
+    AssetValidationSummary,
+    AssetValidator,
+    InventoryValidationReport,
+    ValidationError,
+    ValidationIssue,
+)
 
 
 class AssetService:
@@ -62,6 +69,45 @@ class AssetService:
 
     def get_category_schema(self, category: str) -> AssetSchemaView:
         return self.repository.get_category_schema(category)
+
+
+    def get_asset_quality_report(self) -> InventoryValidationReport:
+        inventory_payloads = self.repository.iter_inventory_payloads()
+        duplicate_counts = Counter(
+            payload.payload.get(self.repository.catalog.id_field)
+            for payload in inventory_payloads
+            if isinstance(payload.payload.get(self.repository.catalog.id_field), str)
+        )
+        duplicate_asset_ids = {asset_id for asset_id, count in duplicate_counts.items() if count > 1}
+
+        issues = []
+        asset_summaries: list[AssetValidationSummary] = []
+        for inventory_payload in inventory_payloads:
+            payload = dict(inventory_payload.payload)
+            asset_issues = self.validator.audit_payload(
+                payload,
+                row_number=inventory_payload.row_number,
+                duplicate_asset_ids=duplicate_asset_ids,
+            )
+            asset_id = payload.get(self.repository.catalog.id_field)
+            category = payload.get("Asset_Category")
+            asset_summaries.append(
+                AssetValidationSummary(
+                    asset_id=asset_id if isinstance(asset_id, str) else None,
+                    category=category if isinstance(category, str) else None,
+                    row_number=inventory_payload.row_number,
+                    issue_count=len(asset_issues),
+                )
+            )
+            issues.extend(asset_issues)
+
+        return InventoryValidationReport(
+            total_assets=len(inventory_payloads),
+            assets_with_issues=sum(1 for asset in asset_summaries if asset.issue_count > 0),
+            issue_count=len(issues),
+            issues=tuple(issues),
+            assets=tuple(asset_summaries),
+        )
 
     def patch_asset(
         self,

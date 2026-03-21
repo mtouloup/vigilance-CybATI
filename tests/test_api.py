@@ -12,6 +12,7 @@ from vigilance_assets import (
     AssetValidator,
     AssetNotFoundError,
     DuplicateAssetError,
+    InventoryPayload,
     UnsupportedCategoryError,
     UnsupportedVocabularyError,
     build_asset_record,
@@ -76,6 +77,28 @@ class ApiRepository(AssetRepository):
             raise AssetNotFoundError(asset_id)
         self.deleted.append((asset_id, mode))
 
+
+    def iter_inventory_payloads(self) -> tuple[InventoryPayload, ...]:
+        valid_payload = self.asset.to_dict()
+        invalid_payload = {
+            **valid_payload,
+            "Asset_ID": "AST-002",
+            "Owner_Org": "",
+            "TRL_Start": 10,
+            "Tool_Type": "Unknown Tool Type",
+            "Service_Type": "Security Service",
+            "Documentation_Link": "not-a-url",
+        }
+        duplicate_payload = {
+            **valid_payload,
+            "Asset_Name": "Threat Radar Clone",
+        }
+        return (
+            InventoryPayload(payload=valid_payload, row_number=2),
+            InventoryPayload(payload=invalid_payload, row_number=3),
+            InventoryPayload(payload=duplicate_payload, row_number=4),
+        )
+
     def get_vocabulary(self, name: str) -> tuple[str, ...]:
         if name == "missing":
             raise UnsupportedVocabularyError(name)
@@ -112,6 +135,24 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(payload['meta']['search'], 'threat')
         self.assertEqual(payload['meta']['sort'][0]['field'], 'Asset_Name')
 
+
+
+    def test_get_assets_quality_returns_machine_readable_inventory_report(self) -> None:
+        response = self.client.get('/assets/quality')
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload['meta']['total_assets'], 3)
+        self.assertEqual(payload['meta']['assets_with_issues'], 3)
+        self.assertGreaterEqual(payload['meta']['issue_count'], 6)
+        issue_codes = {(issue['row_number'], issue['field'], issue['code']) for issue in payload['data']['issues']}
+        self.assertIn((3, 'Owner_Org', 'required'), issue_codes)
+        self.assertIn((3, 'TRL_Start', 'out_of_range'), issue_codes)
+        self.assertIn((3, 'Tool_Type', 'invalid_choice'), issue_codes)
+        self.assertIn((3, 'Service_Type', 'category_exclusive'), issue_codes)
+        self.assertIn((3, 'Documentation_Link', 'invalid_url'), issue_codes)
+        self.assertIn((2, 'Asset_ID', 'duplicate'), issue_codes)
+        self.assertIn((4, 'Asset_ID', 'duplicate'), issue_codes)
 
     def test_post_assets_creates_asset_and_returns_created_payload(self) -> None:
         response = self.client.post(
