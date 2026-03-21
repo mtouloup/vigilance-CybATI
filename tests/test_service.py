@@ -12,6 +12,7 @@ from vigilance_assets import (
     AssetService,
     AssetValidator,
     DuplicateAssetError,
+    InventoryPayload,
     ValidationError,
 )
 
@@ -40,6 +41,54 @@ class InMemoryAssetRepository(AssetRepository):
             raise AssetNotFoundError(asset_id)
         self._assets[asset_id] = asset
         return asset
+
+
+    def iter_inventory_payloads(self) -> tuple[InventoryPayload, ...]:
+        return (
+            InventoryPayload(
+                payload={
+                    "Asset_ID": "AST-001",
+                    "Asset_Name": "Threat Radar",
+                    "Asset_Category": "Cybersecurity Tool",
+                    "Owner_Org": "OpenAI Security Lab",
+                    "Owner_Contact": "alice@example.org",
+                    "Pilot_s": "Pilot A",
+                    "Purpose": "Aggregates threat findings for analysts.",
+                    "Status": "Active",
+                    "TRL_Start": 4,
+                    "TRL_Target": 7,
+                    "Related_Result": "RS3",
+                    "Related_WP_Task": "T5.3",
+                    "Deployment_Context": "Cloud",
+                    "Last_Updated": "2026-03-21T10:00:00",
+                    "Updated_By": "alice@example.org",
+                    "Tool_Type": "SIEM (Security Information and Event Management)",
+                },
+                row_number=2,
+            ),
+            InventoryPayload(
+                payload={
+                    "Asset_ID": "AST-001",
+                    "Asset_Name": "Broken Radar",
+                    "Asset_Category": "Cybersecurity Tool",
+                    "Owner_Org": "",
+                    "Owner_Contact": "alice@example.org",
+                    "Pilot_s": "Pilot A",
+                    "Purpose": "Broken row.",
+                    "Status": "Unknown",
+                    "TRL_Start": 0,
+                    "TRL_Target": 7,
+                    "Related_Result": "RS3",
+                    "Related_WP_Task": "T5.3",
+                    "Deployment_Context": "Cloud",
+                    "Last_Updated": "bad-date",
+                    "Updated_By": "alice@example.org",
+                    "Tool_Type": "SIEM (Security Information and Event Management)",
+                    "Service_Type": "Security Service",
+                },
+                row_number=3,
+            ),
+        )
 
     def delete_asset(self, asset_id: str, *, mode: str = "archive") -> None:
         if asset_id not in self._assets:
@@ -74,6 +123,22 @@ class AssetServiceTests(unittest.TestCase):
             "Updated_By": "ignored-on-write@example.org",
             "Tool_Type": "SIEM (Security Information and Event Management)",
         }
+
+
+    def test_get_asset_quality_report_includes_duplicate_and_schema_violations(self) -> None:
+        report = self.service.get_asset_quality_report()
+
+        self.assertEqual(report.total_assets, 2)
+        self.assertEqual(report.assets_with_issues, 2)
+        self.assertGreaterEqual(report.issue_count, 5)
+        issue_codes = {(issue.row_number, issue.field, issue.code) for issue in report.issues}
+        self.assertIn((2, 'Asset_ID', 'duplicate'), issue_codes)
+        self.assertIn((3, 'Asset_ID', 'duplicate'), issue_codes)
+        self.assertIn((3, 'Owner_Org', 'required'), issue_codes)
+        self.assertIn((3, 'Status', 'invalid_choice'), issue_codes)
+        self.assertIn((3, 'TRL_Start', 'out_of_range'), issue_codes)
+        self.assertIn((3, 'Last_Updated', 'invalid_datetime'), issue_codes)
+        self.assertIn((3, 'Service_Type', 'category_exclusive'), issue_codes)
 
     def test_create_asset_validates_and_stamps_metadata(self) -> None:
         asset = self.service.create_asset(self.base_payload, updated_by="service@example.org")

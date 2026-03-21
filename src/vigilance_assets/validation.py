@@ -9,6 +9,35 @@ from .models import build_asset_record
 from .schema import AssetSchemaCatalog, FieldDefinition, load_schema_catalog
 
 
+
+
+@dataclass(frozen=True, slots=True)
+class InventoryValidationIssue:
+    asset_id: str | None
+    category: str | None
+    field: str
+    message: str
+    code: str
+    row_number: int | None = None
+    severity: str = "error"
+
+
+@dataclass(frozen=True, slots=True)
+class AssetValidationSummary:
+    asset_id: str | None
+    category: str | None
+    row_number: int | None
+    issue_count: int
+
+
+@dataclass(frozen=True, slots=True)
+class InventoryValidationReport:
+    total_assets: int
+    assets_with_issues: int
+    issue_count: int
+    issues: tuple[InventoryValidationIssue, ...]
+    assets: tuple[AssetValidationSummary, ...]
+
 @dataclass(frozen=True, slots=True)
 class ValidationIssue:
     field: str
@@ -61,6 +90,30 @@ class AssetValidator:
         if issues:
             raise ValidationError(issues)
         return build_asset_record(payload)
+
+    def audit_payload(
+        self,
+        payload: dict[str, Any],
+        *,
+        row_number: int | None = None,
+        duplicate_asset_ids: set[str] | None = None,
+    ) -> list[InventoryValidationIssue]:
+        issues = self._validate_payload(payload, partial=False, existing_asset_ids=None)
+        asset_id = payload.get(self.catalog.id_field)
+        category = payload.get("Asset_Category")
+        if isinstance(asset_id, str) and duplicate_asset_ids and asset_id in duplicate_asset_ids:
+            issues.append(ValidationIssue(self.catalog.id_field, "Asset_ID must be unique.", "duplicate"))
+        return [
+            InventoryValidationIssue(
+                asset_id=asset_id if isinstance(asset_id, str) else None,
+                category=category if isinstance(category, str) else None,
+                field=issue.field,
+                message=issue.message,
+                code=issue.code,
+                row_number=row_number,
+            )
+            for issue in issues
+        ]
 
     def _validate_payload(
         self,

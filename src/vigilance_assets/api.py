@@ -59,6 +59,24 @@ def create_app(service: AssetService | None = None, *, repository: AssetReposito
         asset = service.get_asset(asset_id)
         return _success_response(data=_serialize_asset(asset))
 
+    @app.get("/assets/quality")
+    def get_asset_quality() -> Any:
+        report = service.get_asset_quality_report()
+        return _success_response(
+            data={
+                "assets": [asdict(asset) for asset in report.assets],
+                "issues": [asdict(issue) for issue in report.issues],
+            },
+            meta={
+                "total_assets": report.total_assets,
+                "assets_with_issues": report.assets_with_issues,
+                "issue_count": report.issue_count,
+                "schema_name": service.repository.catalog.schema_name,
+                "schema_version": service.repository.catalog.version,
+                "id_field": service.repository.catalog.id_field,
+            },
+        )
+
     @app.post("/assets")
     def create_asset() -> Any:
         asset = service.create_asset(_require_json_object(), updated_by=_request_updated_by())

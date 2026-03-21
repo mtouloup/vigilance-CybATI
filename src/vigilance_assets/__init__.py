@@ -16,6 +16,7 @@ from .repository import (
     AssetListQuery,
     AssetPage,
     AssetRepository,
+    InventoryPayload,
     AssetSchemaView,
     AssetSort,
     AssetNotFoundError,
@@ -28,7 +29,14 @@ from .schema import AssetSchemaCatalog, load_schema_catalog
 from .api import create_app
 from .service import AssetService
 from .spreadsheet import ASSETS_SHEET_NAME, AssetSpreadsheetMapper, SheetRecord, SpreadsheetBackendError, SpreadsheetTableGateway
-from .validation import AssetValidator, ValidationError, ValidationIssue
+from .validation import (
+    AssetValidationSummary,
+    AssetValidator,
+    InventoryValidationIssue,
+    InventoryValidationReport,
+    ValidationError,
+    ValidationIssue,
+)
 
 __all__ = [
     "AssetListQuery",
@@ -36,6 +44,7 @@ __all__ = [
     "AssetPage",
     "AssetRecord",
     "AssetRepository",
+    "InventoryPayload",
     "AssetSchemaView",
     "AssetSort",
     "AssetSchemaCatalog",
@@ -43,6 +52,7 @@ __all__ = [
     "create_app",
     "ASSETS_SHEET_NAME",
     "AssetSpreadsheetMapper",
+    "AssetValidationSummary",
     "AssetValidator",
     "CategorySpecificFields",
     "CommonAssetFields",
@@ -59,6 +69,8 @@ __all__ = [
     "SheetRecord",
     "UnsupportedCategoryError",
     "UnsupportedVocabularyError",
+    "InventoryValidationIssue",
+    "InventoryValidationReport",
     "ValidationError",
     "ValidationIssue",
     "build_asset_record",
