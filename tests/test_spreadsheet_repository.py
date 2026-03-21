@@ -1,0 +1,119 @@
+from __future__ import annotations
+
+import unittest
+
+from vigilance_assets import AssetListQuery, AssetSort, SpreadsheetAssetRepository
+from vigilance_assets.spreadsheet import SheetRecord
+
+
+class FakeSpreadsheetGateway:
+    def __init__(self) -> None:
+        self._rows = [
+            SheetRecord(
+                row_number=2,
+                values={
+                    "Asset_ID": "AST-001",
+                    "Asset_Name": "Threat Radar",
+                    "Asset_Category": "Cybersecurity Tool",
+                    "Owner_Org": "OpenAI Security Lab",
+                    "Owner_Contact": "alice@example.org",
+                    "Pilot (s)": "Pilot A",
+                    "Purpose (1-2 sentences)": "Aggregates threat findings for analysts.",
+                    "Status": "Active",
+                    "TRL_Start": "4",
+                    "TRL_Target": 7,
+                    "Related_Result": "RS3",
+                    "Related_WP_Task": "T5.3",
+                    "Deployment_Context": "Cloud",
+                    "Last_Updated": "2026-03-21T10:00:00+00:00",
+                    "Updated_By": "alice@example.org",
+                    "Tool_Type": "SIEM (Security Information and Event Management)",
+                },
+            )
+        ]
+
+    def list_rows(self, sheet_name: str) -> list[SheetRecord]:
+        self.last_sheet_name = sheet_name
+        return list(self._rows)
+
+    def append_row(self, sheet_name: str, values: dict[str, object]) -> SheetRecord:
+        record = SheetRecord(row_number=len(self._rows) + 2, values=values)
+        self._rows.append(record)
+        return record
+
+    def update_row(self, sheet_name: str, row_number: int, values: dict[str, object]) -> SheetRecord:
+        for index, record in enumerate(self._rows):
+            if record.row_number == row_number:
+                updated = SheetRecord(row_number=row_number, values=values)
+                self._rows[index] = updated
+                return updated
+        raise AssertionError("row not found")
+
+    def delete_row(self, sheet_name: str, row_number: int) -> None:
+        self._rows = [record for record in self._rows if record.row_number != row_number]
+
+
+class SpreadsheetRepositoryTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.gateway = FakeSpreadsheetGateway()
+        self.repository = SpreadsheetAssetRepository("workbook.xlsx", gateway=self.gateway)
+
+    def test_get_asset_maps_headers_to_domain_fields(self) -> None:
+        asset = self.repository.get_asset("AST-001")
+
+        assert asset is not None
+        self.assertEqual(asset.common.Pilot_s, "Pilot A")
+        self.assertEqual(asset.common.Purpose, "Aggregates threat findings for analysts.")
+        self.assertEqual(asset.common.TRL_Start, 4)
+
+    def test_list_assets_supports_filter_search_and_sort(self) -> None:
+        created = self.repository.create_asset(
+            self.repository.mapper.row_to_asset(
+                {
+                    "Asset_ID": "AST-002",
+                    "Asset_Name": "Beacon",
+                    "Asset_Category": "Cybersecurity Tool",
+                    "Owner_Org": "OpenAI Security Lab",
+                    "Owner_Contact": "bob@example.org",
+                    "Pilot (s)": "Pilot B",
+                    "Purpose (1-2 sentences)": "Monitors endpoint posture.",
+                    "Status": "Deprecated",
+                    "TRL_Start": 2,
+                    "TRL_Target": 5,
+                    "Related_Result": "RS4",
+                    "Related_WP_Task": "T5.4",
+                    "Deployment_Context": "IT",
+                    "Last_Updated": "2026-03-22",
+                    "Updated_By": "bob@example.org",
+                    "Tool_Type": "EDR (Endpoint Detection and Response)",
+                }
+            )
+        )
+        self.assertEqual(created.asset_id, "AST-002")
+
+        page = self.repository.list_assets(
+            AssetListQuery(
+                filters={"Status": ["Active", "Deprecated"]},
+                search="endpoint",
+                sort=(AssetSort(field="Asset_Name", direction="desc"),),
+                page=1,
+                page_size=10,
+            )
+        )
+
+        self.assertEqual(page.total, 1)
+        self.assertEqual(page.items[0].asset_id, "AST-002")
+
+    def test_asset_to_row_clears_non_category_columns(self) -> None:
+        asset = self.repository.get_asset("AST-001")
+        assert asset is not None
+
+        row = self.repository.mapper.asset_to_row(asset)
+
+        self.assertIn("Pilot (s)", row)
+        self.assertIsNone(row["Service_Type"])
+        self.assertEqual(row["Purpose (1-2 sentences)"], "Aggregates threat findings for analysts.")
+
+
+if __name__ == "__main__":
+    unittest.main()

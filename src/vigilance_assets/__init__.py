@@ -26,6 +26,7 @@ from .repository import (
 )
 from .schema import AssetSchemaCatalog, load_schema_catalog
 from .service import AssetService
+from .spreadsheet import ASSETS_SHEET_NAME, AssetSpreadsheetMapper, SheetRecord, SpreadsheetBackendError, SpreadsheetTableGateway
 from .validation import AssetValidator, ValidationError, ValidationIssue
 
 __all__ = [
@@ -38,6 +39,8 @@ __all__ = [
     "AssetSort",
     "AssetSchemaCatalog",
     "AssetService",
+    "ASSETS_SHEET_NAME",
+    "AssetSpreadsheetMapper",
     "AssetValidator",
     "CategorySpecificFields",
     "CommonAssetFields",
@@ -49,6 +52,9 @@ __all__ = [
     "PhysicalAssetFields",
     "PlatformServiceFields",
     "SpreadsheetAssetRepository",
+    "SpreadsheetBackendError",
+    "SpreadsheetTableGateway",
+    "SheetRecord",
     "UnsupportedCategoryError",
     "UnsupportedVocabularyError",
     "ValidationError",
