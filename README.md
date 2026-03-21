@@ -853,3 +853,113 @@ The test suite covers:
 - `GET /assets/quality` is implemented in addition to the base CRUD/schema/vocabulary requirements and returns a machine-readable audit of inventory-level issues.
 - `DELETE /assets` defaults to archive semantics by setting `Status` to `Deprecated` in the spreadsheet-backed repository.
 - The repository is architected for spreadsheet-backed persistence, but a concrete production spreadsheet gateway is still expected to be provided by an integrator.
+
+
+## Containerized execution
+
+The repository now includes a production-oriented container image for running the Flask API behind Gunicorn.
+
+### Files added for containerization
+
+- `Dockerfile` - builds a slim Python 3.11 image, installs the package, and starts Gunicorn
+- `.dockerignore` - keeps the image build context small and excludes local caches, tests, and VCS metadata
+- `docker-compose.yml` - convenient local runner for `docker compose`
+- `src/vigilance_assets/wsgi.py` - environment-driven application entry point for container startup
+
+### Runtime configuration
+
+The container startup path uses the existing `VIGILANCE_` environment variables from `src/vigilance_assets/config.py`.
+
+Common variables:
+
+- `PORT` - container listen port for Gunicorn, default `8000`
+- `GUNICORN_WORKERS` - Gunicorn worker count, default `2`
+- `GUNICORN_THREADS` - Gunicorn threads per worker, default `4`
+- `VIGILANCE_SPREADSHEET_BACKEND` - backend selector: `memory`, `workbook`, or `google_sheets`; default `memory`
+- `VIGILANCE_SPREADSHEET_REFERENCE` - optional logical workbook reference
+- `VIGILANCE_SPREADSHEET_WORKBOOK_PATH` - workbook path when using `workbook`
+- `VIGILANCE_SPREADSHEET_WORKBOOK_READ_ONLY` - workbook read-only toggle when using `workbook`
+- `VIGILANCE_SPREADSHEET_GOOGLE_ID` - spreadsheet identifier when using `google_sheets`
+- `VIGILANCE_GOOGLE_CREDENTIALS_PATH` - credential file path for Google Sheets integrations
+- `VIGILANCE_GOOGLE_CREDENTIALS_JSON` - inline credential JSON for Google Sheets integrations
+- `VIGILANCE_ASSETS_SHEET_NAME` - assets sheet name override, default `ASSETS`
+- `VIGILANCE_VOCABULARIES_SHEET_NAME` - vocabularies sheet name override, default `VOCABULARIES`
+
+> Note: this repository currently ships an in-memory gateway suitable for local/container startup. The non-memory backends remain configuration-ready, but still require a registered spreadsheet gateway implementation before they can talk to a real workbook or Google Sheets backend.
+
+### Build the image
+
+```bash
+docker build -t vigilance-assets:local .
+```
+
+### Run the container with `docker run`
+
+Default local startup uses the in-memory backend:
+
+```bash
+docker run --rm -p 8000:8000 vigilance-assets:local
+```
+
+Pass environment variables with `-e` flags:
+
+```bash
+docker run --rm \
+  -p 8000:8000 \
+  -e PORT=8000 \
+  -e GUNICORN_WORKERS=2 \
+  -e VIGILANCE_SPREADSHEET_BACKEND=memory \
+  vigilance-assets:local
+```
+
+If you need to inject many variables, you can use an env file:
+
+```bash
+docker run --rm \
+  --env-file .env \
+  -p 8000:8000 \
+  vigilance-assets:local
+```
+
+Stop the container by pressing `Ctrl+C` in the foreground, or if running detached:
+
+```bash
+docker stop <container_id_or_name>
+```
+
+### Run with Docker Compose
+
+Start the service:
+
+```bash
+docker compose up --build
+```
+
+Run detached:
+
+```bash
+docker compose up --build -d
+```
+
+Override variables either in your shell or in a `.env` file that Docker Compose will read automatically. Example:
+
+```dotenv
+PORT=8000
+VIGILANCE_SPREADSHEET_BACKEND=memory
+GUNICORN_WORKERS=2
+GUNICORN_THREADS=4
+```
+
+Stop the compose stack:
+
+```bash
+docker compose down
+```
+
+### Health check / quick verification
+
+After the container starts, verify the API is responding:
+
+```bash
+curl http://127.0.0.1:8000/schema/assets
+```
