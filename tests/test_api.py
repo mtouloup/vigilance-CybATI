@@ -83,7 +83,11 @@ class ApiTests(unittest.TestCase):
         self.client = create_app(service).test_client()
 
     def test_get_assets_returns_consistent_payload(self) -> None:
-        response = self.client.get('/assets?Asset_Category=Cybersecurity+Tool&search=threat&sort=Asset_Name&page=1&page_size=10')
+        response = self.client.get(
+            '/assets?Asset_Category=Cybersecurity+Tool&Owner_Org=OpenAI+Security+Lab'
+            '&Status=Active&Pilot_s=Pilot+A&Deployment_Context=Cloud'
+            '&Related_WP_Task=T5.3&search=  threat  &sort=Asset_Name&page=1&page_size=10'
+        )
 
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
@@ -91,6 +95,10 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(payload['meta']['total'], 1)
         self.assertEqual(payload['data']['items'][0]['Asset_ID'], 'AST-001')
         self.assertEqual(payload['meta']['filters']['Asset_Category'], 'Cybersecurity Tool')
+        self.assertEqual(payload['meta']['filters']['Owner_Org'], 'OpenAI Security Lab')
+        self.assertEqual(payload['meta']['filters']['Pilot_s'], 'Pilot A')
+        self.assertEqual(payload['meta']['filters']['Related_WP_Task'], 'T5.3')
+        self.assertEqual(payload['meta']['search'], 'threat')
         self.assertEqual(payload['meta']['sort'][0]['field'], 'Asset_Name')
 
     def test_get_asset_returns_not_found_error_payload(self) -> None:
@@ -152,6 +160,14 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 400)
         payload = response.get_json()
         self.assertEqual(payload['error']['code'], 'invalid_request')
+
+    def test_get_assets_rejects_unsupported_query_parameters(self) -> None:
+        response = self.client.get('/assets?Tool_Type=SIEM')
+
+        self.assertEqual(response.status_code, 400)
+        payload = response.get_json()
+        self.assertEqual(payload['error']['code'], 'invalid_request')
+        self.assertIn('Unsupported query parameter', payload['error']['message'])
 
 
 if __name__ == '__main__':

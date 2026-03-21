@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, is_dataclass
 from datetime import date, datetime
+from collections.abc import Iterable
 from typing import Any
 
 from flask import Flask, jsonify, request
@@ -135,19 +136,48 @@ def create_app(service: AssetService | None = None, *, repository: AssetReposito
 
 
 def _build_asset_list_query(args: Any, repository: AssetRepository) -> AssetListQuery:
+    _validate_asset_list_query_params(args.keys(), repository)
+
     page = _parse_positive_int(args.get("page", "1"), field="page")
     page_size = _parse_positive_int(args.get("page_size", "50"), field="page_size")
-    search = args.get("search") or None
+    search = _normalize_search_term(args.get("search"))
 
     filters: dict[str, Any] = {}
     for field in repository.catalog.filterable_fields:
-        values = [value for value in args.getlist(field) if value != ""]
+        values = [_coerce_field_value(field, value, repository) for value in args.getlist(field) if value != ""]
         if not values:
             continue
         filters[field] = values[0] if len(values) == 1 else tuple(values)
 
     sort = _parse_sort(args.getlist("sort"), repository)
     return AssetListQuery(filters=filters, search=search, sort=sort, page=page, page_size=page_size)
+
+
+ASSET_LIST_RESERVED_PARAMS = frozenset({"page", "page_size", "search", "sort"})
+
+
+def _validate_asset_list_query_params(param_names: Iterable[str], repository: AssetRepository) -> None:
+    allowed = ASSET_LIST_RESERVED_PARAMS | set(repository.catalog.filterable_fields)
+    unexpected = sorted({name for name in param_names if name not in allowed})
+    if unexpected:
+        formatted = ", ".join(unexpected)
+        raise ValueError(f"Unsupported query parameter(s) for /assets: {formatted}")
+
+
+def _normalize_search_term(raw_value: str | None) -> str | None:
+    if raw_value is None:
+        return None
+    normalized = raw_value.strip()
+    return normalized or None
+
+
+def _coerce_field_value(field: str, raw_value: str, repository: AssetRepository) -> Any:
+    definition = repository.catalog.field_definition(field)
+    if definition is None:
+        return raw_value
+    if definition.field_type == "integer":
+        return _parse_integer(raw_value, field=field)
+    return raw_value
 
 
 def _parse_sort(raw_sort_values: list[str], repository: AssetRepository) -> tuple[AssetSort, ...]:
@@ -167,13 +197,17 @@ def _parse_sort(raw_sort_values: list[str], repository: AssetRepository) -> tupl
 
 
 def _parse_positive_int(raw_value: str, *, field: str) -> int:
-    try:
-        value = int(raw_value)
-    except (TypeError, ValueError) as exc:
-        raise ValueError(f"{field} must be a positive integer.") from exc
+    value = _parse_integer(raw_value, field=field)
     if value < 1:
         raise ValueError(f"{field} must be a positive integer.")
     return value
+
+
+def _parse_integer(raw_value: str, *, field: str) -> int:
+    try:
+        return int(raw_value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{field} must be an integer.") from exc
 
 
 def _serialize_asset(asset: Any) -> dict[str, Any]:
