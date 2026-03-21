@@ -1,13 +1,15 @@
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from datetime import datetime, timezone
 from typing import Any
 
 from .models import AssetRecord
 from .repository import (
+    AssetListQuery,
     AssetPage,
     AssetRepository,
+    AssetSchemaView,
     DeleteMode,
 )
 from .validation import AssetValidator
@@ -48,6 +50,18 @@ class AssetService:
 
     def list_assets(self, query: AssetListQuery | None = None) -> AssetPage:
         return self.repository.list_assets(query)
+
+    def get_vocabularies(self) -> Mapping[str, tuple[str, ...]]:
+        return self.repository.get_vocabularies()
+
+    def get_vocabulary(self, name: str) -> tuple[str, ...]:
+        return self.repository.get_vocabulary(name)
+
+    def get_asset_schema(self) -> AssetSchemaView:
+        return self.repository.get_asset_schema()
+
+    def get_category_schema(self, category: str) -> AssetSchemaView:
+        return self.repository.get_category_schema(category)
 
     def patch_asset(
         self,

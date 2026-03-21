@@ -7,6 +7,9 @@ name = "vigilance-assets"
 version = "0.1.0"
 description = "Internal domain models and validators for the VIGILANCE asset inventory service"
 requires-python = ">=3.11"
+dependencies = [
+    "Flask>=3.1,<4",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

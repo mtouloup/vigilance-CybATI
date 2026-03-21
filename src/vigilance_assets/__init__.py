@@ -25,6 +25,7 @@ from .repository import (
     UnsupportedVocabularyError,
 )
 from .schema import AssetSchemaCatalog, load_schema_catalog
+from .api import create_app
 from .service import AssetService
 from .spreadsheet import ASSETS_SHEET_NAME, AssetSpreadsheetMapper, SheetRecord, SpreadsheetBackendError, SpreadsheetTableGateway
 from .validation import AssetValidator, ValidationError, ValidationIssue
@@ -39,6 +40,7 @@ __all__ = [
     "AssetSort",
     "AssetSchemaCatalog",
     "AssetService",
+    "create_app",
     "ASSETS_SHEET_NAME",
     "AssetSpreadsheetMapper",
     "AssetValidator",
