@@ -43,6 +43,25 @@ class AssetValidator:
             raise ValidationError(issues)
         return merged
 
+    def validate_for_replace(
+        self,
+        payload: dict[str, Any],
+        *,
+        expected_asset_id: str | None = None,
+    ):
+        issues = self._validate_payload(payload, partial=False, existing_asset_ids=None)
+        if expected_asset_id is not None and payload.get(self.catalog.id_field) != expected_asset_id:
+            issues.append(
+                ValidationIssue(
+                    self.catalog.id_field,
+                    "Asset_ID is immutable.",
+                    "immutable",
+                )
+            )
+        if issues:
+            raise ValidationError(issues)
+        return build_asset_record(payload)
+
     def _validate_payload(
         self,
         payload: dict[str, Any],

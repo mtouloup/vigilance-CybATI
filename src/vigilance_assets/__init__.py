@@ -25,6 +25,7 @@ from .repository import (
     UnsupportedVocabularyError,
 )
 from .schema import AssetSchemaCatalog, load_schema_catalog
+from .service import AssetService
 from .validation import AssetValidator, ValidationError, ValidationIssue
 
 __all__ = [
@@ -36,6 +37,7 @@ __all__ = [
     "AssetSchemaView",
     "AssetSort",
     "AssetSchemaCatalog",
+    "AssetService",
     "AssetValidator",
     "CategorySpecificFields",
     "CommonAssetFields",
