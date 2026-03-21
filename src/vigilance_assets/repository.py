@@ -46,6 +46,7 @@ class InventoryPayload:
     payload: Mapping[str, Any]
     row_number: int | None = None
 
+
 @dataclass(frozen=True, slots=True)
 class AssetPage:
     """Paginated result set returned by :meth:`AssetRepository.list_assets`."""
@@ -197,10 +198,7 @@ class SpreadsheetAssetRepository(AssetRepository):
         return AssetPage(items=tuple(matched[start:end]), total=total, page=query.page, page_size=query.page_size)
 
     def get_asset(self, asset_id: str) -> AssetRecord | None:
-        for _, asset in self._load_sheet_rows():
-            if asset.asset_id == asset_id:
-                return asset
-        return None
+        return self._find_asset_row(asset_id)[1]
 
     def create_asset(self, asset: AssetRecord) -> AssetRecord:
         if self.get_asset(asset.asset_id) is not None:
@@ -210,25 +208,19 @@ class SpreadsheetAssetRepository(AssetRepository):
 
     def update_asset(self, asset_id: str, asset: AssetRecord) -> AssetRecord:
         gateway = self._require_gateway()
-        for row_number, existing_asset in self._load_sheet_rows():
-            if existing_asset.asset_id == asset_id:
-                record = gateway.update_row(self.mapper.sheet_name, row_number, self.mapper.asset_to_row(asset))
-                return self.mapper.row_to_asset(record.values)
-        raise AssetNotFoundError(asset_id)
+        row_number, _ = self._find_asset_row_or_raise(asset_id)
+        record = gateway.update_row(self.mapper.sheet_name, row_number, self.mapper.asset_to_row(asset))
+        return self.mapper.row_to_asset(record.values)
 
     def delete_asset(self, asset_id: str, *, mode: DeleteMode = "archive") -> None:
         gateway = self._require_gateway()
-        for row_number, existing_asset in self._load_sheet_rows():
-            if existing_asset.asset_id != asset_id:
-                continue
-            if mode == "delete":
-                gateway.delete_row(self.mapper.sheet_name, row_number)
-                return
-            archived_payload = {**existing_asset.to_dict(), "Status": "Deprecated"}
-            archived_asset = build_asset_record(archived_payload)
-            gateway.update_row(self.mapper.sheet_name, row_number, self.mapper.asset_to_row(archived_asset))
+        row_number, existing_asset = self._find_asset_row_or_raise(asset_id)
+        if mode == "delete":
+            gateway.delete_row(self.mapper.sheet_name, row_number)
             return
-        raise AssetNotFoundError(asset_id)
+        archived_payload = {**existing_asset.to_dict(), "Status": "Deprecated"}
+        archived_asset = build_asset_record(archived_payload)
+        gateway.update_row(self.mapper.sheet_name, row_number, self.mapper.asset_to_row(archived_asset))
 
     def iter_inventory_payloads(self) -> tuple[InventoryPayload, ...]:
         return tuple(
@@ -242,6 +234,18 @@ class SpreadsheetAssetRepository(AssetRepository):
             (record.row_number, self.mapper.row_to_asset(record.values))
             for record in gateway.list_rows(self.mapper.sheet_name)
         ]
+
+    def _find_asset_row(self, asset_id: str) -> tuple[int | None, AssetRecord | None]:
+        for row_number, asset in self._load_sheet_rows():
+            if asset.asset_id == asset_id:
+                return row_number, asset
+        return None, None
+
+    def _find_asset_row_or_raise(self, asset_id: str) -> tuple[int, AssetRecord]:
+        row_number, asset = self._find_asset_row(asset_id)
+        if row_number is None or asset is None:
+            raise AssetNotFoundError(asset_id)
+        return row_number, asset
 
     def _require_gateway(self) -> SpreadsheetTableGateway:
         if self.gateway is None:

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -35,6 +35,8 @@ class ValidationRules:
 
 @dataclass(frozen=True, slots=True)
 class AssetSchemaCatalog:
+    """In-memory representation of the canonical asset schema."""
+
     schema_name: str
     version: str
     id_field: str
@@ -45,27 +47,36 @@ class AssetSchemaCatalog:
     searchable_fields: tuple[str, ...]
     filterable_fields: tuple[str, ...]
     sortable_fields: tuple[str, ...]
+    _field_definitions_by_name: dict[str, FieldDefinition] = field(init=False, repr=False)
+    _common_field_names: frozenset[str] = field(init=False, repr=False)
+    _all_category_field_names: frozenset[str] = field(init=False, repr=False)
+    _category_field_names: dict[str, frozenset[str]] = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        field_definitions = {field.name: field for field in self.common_fields}
+        category_field_names: dict[str, frozenset[str]] = {}
+        for category, fields in self.category_fields.items():
+            category_field_names[category] = frozenset(field.name for field in fields)
+            for field_definition in fields:
+                field_definitions[field_definition.name] = field_definition
+        object.__setattr__(self, "_field_definitions_by_name", field_definitions)
+        object.__setattr__(self, "_common_field_names", frozenset(field.name for field in self.common_fields))
+        object.__setattr__(self, "_all_category_field_names", frozenset(field.name for fields in self.category_fields.values() for field in fields))
+        object.__setattr__(self, "_category_field_names", category_field_names)
 
     @property
     def common_field_names(self) -> set[str]:
-        return {field.name for field in self.common_fields}
+        return set(self._common_field_names)
 
     @property
     def all_category_field_names(self) -> set[str]:
-        return {field.name for fields in self.category_fields.values() for field in fields}
+        return set(self._all_category_field_names)
 
     def category_field_names(self, category: str) -> set[str]:
-        return {field.name for field in self.category_fields[category]}
+        return set(self._category_field_names[category])
 
     def field_definition(self, field_name: str) -> FieldDefinition | None:
-        for field in self.common_fields:
-            if field.name == field_name:
-                return field
-        for fields in self.category_fields.values():
-            for field in fields:
-                if field.name == field_name:
-                    return field
-        return None
+        return self._field_definitions_by_name.get(field_name)
 
 
 def _field_from_json(payload: dict[str, Any]) -> FieldDefinition:
