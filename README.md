@@ -803,7 +803,11 @@ pip install -e .
 
 ### Start the Flask app
 
-This repository exposes `create_app` and also includes `src/vigilance_assets/wsgi.py`, which can boot the service from environment variables. You can still create a small bootstrap script for custom wiring, but the built-in runtime path now supports both the in-memory backend and the Google Sheets adapter.
+This repository exposes `create_app` and also includes `src/vigilance_assets/wsgi.py`, which now initializes the selected storage backend from `VIGILANCE_` environment variables at startup. Supported runtime backends are:
+
+- `memory` for in-memory/test usage
+- `file` for a local `.xlsx` workbook on disk
+- `google_sheets` for a hosted Google Sheet
 
 ### Explore the API in Swagger UI
 
@@ -945,25 +949,54 @@ This makes operational failures visible without leaking Google-specific concerns
 
 ### Runtime configuration
 
-The container startup path uses the existing `VIGILANCE_` environment variables from `src/vigilance_assets/config.py`.
+The runtime backend is selected once at app startup through `src/vigilance_assets/wsgi.py`. The same environment variables work for local runs and Docker.
 
-Common variables:
+#### Configuration matrix
 
-- `PORT` - container listen port for Gunicorn, default `8000`
+| Backend | `VIGILANCE_SPREADSHEET_BACKEND` | Required variables | Optional variables | Notes |
+| --- | --- | --- | --- | --- |
+| In-memory / test | `memory` | none | `VIGILANCE_SPREADSHEET_REFERENCE` | Good default for tests and local smoke runs. |
+| Local file | `file` | `VIGILANCE_SPREADSHEET_FILE_PATH` | `VIGILANCE_SPREADSHEET_FILE_READ_ONLY`, `VIGILANCE_ASSETS_SHEET_NAME`, `VIGILANCE_VOCABULARIES_SHEET_NAME` | Uses a local `.xlsx` workbook and creates it with canonical headers if it does not exist yet. |
+| Google Sheets | `google_sheets` | `VIGILANCE_SPREADSHEET_GOOGLE_ID` | `VIGILANCE_GOOGLE_SHEETS_MODE`, `VIGILANCE_GOOGLE_CREDENTIALS_PATH`, `VIGILANCE_GOOGLE_CREDENTIALS_JSON`, `VIGILANCE_ASSETS_SHEET_NAME`, `VIGILANCE_VOCABULARIES_SHEET_NAME` | `read_only` supports public-sheet reads without credentials; writes require authenticated access. |
+
+Common non-backend variables:
+
+- `PORT` - listen port for Gunicorn, default `8000`
 - `GUNICORN_WORKERS` - Gunicorn worker count, default `2`
 - `GUNICORN_THREADS` - Gunicorn threads per worker, default `4`
-- `VIGILANCE_SPREADSHEET_BACKEND` - backend selector: `memory`, `workbook`, or `google_sheets`; default `memory`
-- `VIGILANCE_SPREADSHEET_REFERENCE` - optional logical workbook reference
-- `VIGILANCE_SPREADSHEET_WORKBOOK_PATH` - workbook path when using `workbook`
-- `VIGILANCE_SPREADSHEET_WORKBOOK_READ_ONLY` - workbook read-only toggle when using `workbook`
-- `VIGILANCE_SPREADSHEET_GOOGLE_ID` - spreadsheet identifier when using `google_sheets`
-- `VIGILANCE_ASSETS_SHEET_NAME` - worksheet title for the asset inventory; default `ASSETS`
-- `VIGILANCE_VOCABULARIES_SHEET_NAME` - worksheet title for vocabularies; default `VOCABULARIES`
-- `VIGILANCE_GOOGLE_SHEETS_MODE` - Google Sheets access mode: `auto`, `read_only`, or `read_write`; default `auto`
-- `VIGILANCE_GOOGLE_CREDENTIALS_PATH` - credential file path for Google Sheets integrations
-- `VIGILANCE_GOOGLE_CREDENTIALS_JSON` - inline credential JSON for Google Sheets integrations
+- `VIGILANCE_SPREADSHEET_REFERENCE` - optional logical identifier shown as the repository workbook reference
 
-> Note: the built-in Google Sheets adapter can read the public workbook even without credentials when `VIGILANCE_GOOGLE_SHEETS_MODE=read_only` or when `mode=auto` and no credentials are supplied. Full create/update/delete support requires authenticated Google Sheets API access.
+Backward-compatible aliases are still accepted for local file mode:
+
+- `VIGILANCE_SPREADSHEET_BACKEND=workbook` maps to `file`
+- `VIGILANCE_SPREADSHEET_WORKBOOK_PATH` maps to `VIGILANCE_SPREADSHEET_FILE_PATH`
+- `VIGILANCE_SPREADSHEET_WORKBOOK_READ_ONLY` maps to `VIGILANCE_SPREADSHEET_FILE_READ_ONLY`
+
+### Run locally
+
+In-memory mode:
+
+```bash
+export VIGILANCE_SPREADSHEET_BACKEND=memory
+flask --app vigilance_assets.wsgi:app run --debug
+```
+
+Local file mode:
+
+```bash
+export VIGILANCE_SPREADSHEET_BACKEND=file
+export VIGILANCE_SPREADSHEET_FILE_PATH="$PWD/data/assets.xlsx"
+flask --app vigilance_assets.wsgi:app run --debug
+```
+
+Google Sheets mode:
+
+```bash
+export VIGILANCE_SPREADSHEET_BACKEND=google_sheets
+export VIGILANCE_SPREADSHEET_GOOGLE_ID="<spreadsheet-id>"
+export VIGILANCE_GOOGLE_SHEETS_MODE=read_only
+flask --app vigilance_assets.wsgi:app run --debug
+```
 
 ### Build the image
 
@@ -973,59 +1006,50 @@ docker build -t vigilance-assets:local .
 
 ### Run the container with `docker run`
 
-Default local startup uses the in-memory backend:
+In-memory mode:
 
 ```bash
-docker run --rm -p 8000:8000 vigilance-assets:local
-```
-
-Pass environment variables with `-e` flags:
-
-```bash
-docker run --rm \
-  -p 8000:8000 \
-  -e PORT=8000 \
-  -e GUNICORN_WORKERS=2 \
+docker run --rm -p 8000:8000 \
   -e VIGILANCE_SPREADSHEET_BACKEND=memory \
   vigilance-assets:local
 ```
 
-If you need to inject many variables, you can use an env file:
+Local file mode:
 
 ```bash
-docker run --rm \
-  --env-file .env \
-  -p 8000:8000 \
+mkdir -p "$PWD/data"
+docker run --rm -p 8000:8000 \
+  -v "$PWD/data:/data" \
+  -e VIGILANCE_SPREADSHEET_BACKEND=file \
+  -e VIGILANCE_SPREADSHEET_FILE_PATH=/data/assets.xlsx \
   vigilance-assets:local
 ```
 
-Stop the container by pressing `Ctrl+C` in the foreground, or if running detached:
+Google Sheets mode:
 
 ```bash
-docker stop <container_id_or_name>
+docker run --rm -p 8000:8000 \
+  -e VIGILANCE_SPREADSHEET_BACKEND=google_sheets \
+  -e VIGILANCE_SPREADSHEET_GOOGLE_ID="<spreadsheet-id>" \
+  -e VIGILANCE_GOOGLE_SHEETS_MODE=read_only \
+  vigilance-assets:local
 ```
 
 ### Run with Docker Compose
 
-Start the service:
+The bundled `docker-compose.yml` forwards the same backend variables into the container.
 
 ```bash
 docker compose up --build
 ```
 
-Run detached:
-
-```bash
-docker compose up --build -d
-```
-
-Override variables either in your shell or in a `.env` file that Docker Compose will read automatically. Example:
+Example `.env` for local file mode:
 
 ```dotenv
 PORT=8000
-VIGILANCE_SPREADSHEET_BACKEND=memory
-GUNICORN_WORKERS=2
-GUNICORN_THREADS=4
+VIGILANCE_SPREADSHEET_BACKEND=file
+VIGILANCE_SPREADSHEET_FILE_PATH=/data/assets.xlsx
+VIGILANCE_SPREADSHEET_FILE_READ_ONLY=false
 ```
 
 Stop the compose stack:
