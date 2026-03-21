@@ -14,6 +14,8 @@ from .repository import (
     AssetRepository,
     AssetSchemaView,
     AssetSort,
+    DeleteMode,
+    DuplicateAssetError,
     RepositoryError,
     UnsupportedCategoryError,
     UnsupportedVocabularyError,
@@ -23,7 +25,7 @@ from .validation import ValidationError
 
 
 def create_app(service: AssetService | None = None, *, repository: AssetRepository | None = None) -> Flask:
-    """Create the Flask application for the asset inventory read API."""
+    """Create the Flask application for the asset inventory API."""
 
     if service is None:
         if repository is None:
@@ -57,6 +59,27 @@ def create_app(service: AssetService | None = None, *, repository: AssetReposito
         asset = service.get_asset(asset_id)
         return _success_response(data=_serialize_asset(asset))
 
+    @app.post("/assets")
+    def create_asset() -> Any:
+        asset = service.create_asset(_require_json_object(), updated_by=_request_updated_by())
+        return _success_response(data=_serialize_asset(asset), status=201)
+
+    @app.patch("/assets/<asset_id>")
+    def patch_asset(asset_id: str) -> Any:
+        asset = service.patch_asset(asset_id, _require_json_object(), updated_by=_request_updated_by())
+        return _success_response(data=_serialize_asset(asset))
+
+    @app.put("/assets/<asset_id>")
+    def replace_asset(asset_id: str) -> Any:
+        asset = service.replace_asset(asset_id, _require_json_object(), updated_by=_request_updated_by())
+        return _success_response(data=_serialize_asset(asset))
+
+    @app.delete("/assets/<asset_id>")
+    def delete_asset(asset_id: str) -> Any:
+        mode = _parse_delete_mode(request.args.get("mode"))
+        service.delete_asset(asset_id, mode=mode)
+        return _success_response(data={"asset_id": asset_id, "mode": mode}, status=200)
+
     @app.get("/vocabularies")
     def get_vocabularies() -> Any:
         vocabularies = service.get_vocabularies()
@@ -89,6 +112,14 @@ def create_app(service: AssetService | None = None, *, repository: AssetReposito
             status=404,
             code="asset_not_found",
             message=str(error),
+        )
+
+    @app.errorhandler(DuplicateAssetError)
+    def handle_duplicate(error: DuplicateAssetError) -> Any:
+        return _error_response(
+            status=409,
+            code="duplicate_asset",
+            message=f"Asset_ID already exists: {error}",
         )
 
     @app.errorhandler(UnsupportedVocabularyError)
@@ -154,6 +185,7 @@ def _build_asset_list_query(args: Any, repository: AssetRepository) -> AssetList
 
 
 ASSET_LIST_RESERVED_PARAMS = frozenset({"page", "page_size", "search", "sort"})
+DELETE_MODES: frozenset[str] = frozenset({"archive", "delete"})
 
 
 def _validate_asset_list_query_params(param_names: Iterable[str], repository: AssetRepository) -> None:
@@ -194,6 +226,32 @@ def _parse_sort(raw_sort_values: list[str], repository: AssetRepository) -> tupl
                 raise ValueError(f"Invalid sort field: {field}")
             parsed.append(AssetSort(field=field, direction=direction))
     return tuple(parsed)
+
+
+def _require_json_object() -> dict[str, Any]:
+    payload = request.get_json(silent=True)
+    if payload is None:
+        raise ValueError("Request body must be a JSON object.")
+    if not isinstance(payload, dict):
+        raise ValueError("Request body must be a JSON object.")
+    return payload
+
+
+def _request_updated_by() -> str | None:
+    updated_by = request.headers.get("X-Updated-By")
+    if updated_by is None:
+        return None
+    normalized = updated_by.strip()
+    return normalized or None
+
+
+def _parse_delete_mode(raw_mode: str | None) -> DeleteMode:
+    if raw_mode is None:
+        return "archive"
+    normalized = raw_mode.strip().lower()
+    if normalized not in DELETE_MODES:
+        raise ValueError(f"mode must be one of: {', '.join(sorted(DELETE_MODES))}.")
+    return normalized  # type: ignore[return-value]
 
 
 def _parse_positive_int(raw_value: str, *, field: str) -> int:

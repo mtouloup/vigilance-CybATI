@@ -12,7 +12,7 @@ from .repository import (
     AssetSchemaView,
     DeleteMode,
 )
-from .validation import AssetValidator
+from .validation import AssetValidator, ValidationError, ValidationIssue
 
 
 class AssetService:
@@ -71,6 +71,9 @@ class AssetService:
         updated_by: str | None = None,
     ) -> AssetRecord:
         current = self.get_asset(asset_id)
+        self._ensure_asset_id_is_not_mutated(asset_id, payload)
+        category = payload.get("Asset_Category", current.category)
+        self.validator.validate_for_patch(category, payload)
         merged_payload = {**current.to_dict(), **payload, self.repository.catalog.id_field: asset_id}
         prepared_payload = self._prepare_mutation_payload(merged_payload, updated_by=updated_by)
         asset = self.validator.validate_for_replace(prepared_payload, expected_asset_id=asset_id)
@@ -84,6 +87,7 @@ class AssetService:
         updated_by: str | None = None,
     ) -> AssetRecord:
         self.get_asset(asset_id)
+        self._ensure_asset_id_is_not_mutated(asset_id, payload)
         replacement_payload = {**payload, self.repository.catalog.id_field: asset_id}
         prepared_payload = self._prepare_mutation_payload(replacement_payload, updated_by=updated_by)
         asset = self.validator.validate_for_replace(prepared_payload, expected_asset_id=asset_id)
@@ -107,3 +111,11 @@ class AssetService:
         if updated_by is not None:
             prepared["Updated_By"] = updated_by
         return prepared
+
+    def _ensure_asset_id_is_not_mutated(self, asset_id: str, payload: dict[str, Any]) -> None:
+        requested_asset_id = payload.get(self.repository.catalog.id_field)
+        if requested_asset_id is None or requested_asset_id == asset_id:
+            return
+        raise ValidationError(
+            [ValidationIssue(self.repository.catalog.id_field, "Asset_ID is immutable.", "immutable")]
+        )

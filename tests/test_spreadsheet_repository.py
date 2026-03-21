@@ -137,6 +137,19 @@ class SpreadsheetRepositoryTests(unittest.TestCase):
         self.assertEqual(page.page_size, 1)
         self.assertEqual(page.items[0].asset_id, "AST-002")
 
+
+    def test_delete_asset_archives_by_default(self) -> None:
+        self.repository.delete_asset('AST-001')
+
+        asset = self.repository.get_asset('AST-001')
+        assert asset is not None
+        self.assertEqual(asset.common.Status, 'Deprecated')
+
+    def test_delete_asset_can_physically_remove_row(self) -> None:
+        self.repository.delete_asset('AST-001', mode='delete')
+
+        self.assertIsNone(self.repository.get_asset('AST-001'))
+
     def test_asset_to_row_clears_non_category_columns(self) -> None:
         asset = self.repository.get_asset("AST-001")
         assert asset is not None
