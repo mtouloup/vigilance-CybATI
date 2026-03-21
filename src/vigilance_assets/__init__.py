@@ -35,6 +35,12 @@ from .config import (
     WorkbookSettings,
     load_runtime_settings,
 )
+from .google_sheets import (
+    GoogleSheetsConfigurationError,
+    GoogleSheetsConnectivityError,
+    GoogleSheetsTableGateway,
+    GoogleSheetsWorksheetError,
+)
 from .infrastructure import (
     DEFAULT_GATEWAY_FACTORIES,
     SpreadsheetGatewayFactoryError,
@@ -69,6 +75,10 @@ __all__ = [
     "ConfigurationError",
     "DEFAULT_GATEWAY_FACTORIES",
     "GoogleSheetsSettings",
+    "GoogleSheetsConfigurationError",
+    "GoogleSheetsConnectivityError",
+    "GoogleSheetsTableGateway",
+    "GoogleSheetsWorksheetError",
     "SpreadsheetBackendSettings",
     "SpreadsheetGatewayFactoryError",
     "SpreadsheetGatewayFactoryRegistry",

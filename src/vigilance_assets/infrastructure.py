@@ -4,6 +4,7 @@ from collections.abc import Callable, Mapping
 from dataclasses import dataclass, field
 
 from .config import AppRuntimeSettings, SpreadsheetBackendSettings, load_runtime_settings
+from .google_sheets import build_google_sheets_gateway
 from .repository import SpreadsheetAssetRepository
 from .spreadsheet import SpreadsheetTableGateway
 
@@ -35,6 +36,7 @@ class SpreadsheetGatewayFactoryRegistry:
 
 
 DEFAULT_GATEWAY_FACTORIES = SpreadsheetGatewayFactoryRegistry()
+DEFAULT_GATEWAY_FACTORIES.register("google_sheets", build_google_sheets_gateway)
 
 
 def build_spreadsheet_repository(

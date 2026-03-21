@@ -3,6 +3,7 @@ from __future__ import annotations
 import unittest
 
 from vigilance_assets import (
+    GoogleSheetsTableGateway,
     ConfigurationError,
     SpreadsheetGatewayFactoryError,
     SpreadsheetGatewayFactoryRegistry,
@@ -46,6 +47,18 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.spreadsheet.google_sheets.spreadsheet_id, "sheet-123")
         self.assertEqual(settings.spreadsheet.resolved_workbook_reference, "sheet-123")
 
+
+    def test_load_runtime_settings_supports_google_sheets_mode(self) -> None:
+        settings = load_runtime_settings(
+            {
+                "VIGILANCE_SPREADSHEET_BACKEND": "google_sheets",
+                "VIGILANCE_SPREADSHEET_GOOGLE_ID": "sheet-123",
+                "VIGILANCE_GOOGLE_SHEETS_MODE": "read_only",
+            }
+        )
+
+        self.assertEqual(settings.spreadsheet.google_sheets.mode, "read_only")
+
     def test_load_runtime_settings_requires_workbook_path_for_workbook_backend(self) -> None:
         with self.assertRaises(ConfigurationError):
             load_runtime_settings({"VIGILANCE_SPREADSHEET_BACKEND": "workbook"})
@@ -74,6 +87,18 @@ class ConfigTests(unittest.TestCase):
 
         self.assertEqual(repository.workbook_reference, "inventory.xlsx")
         self.assertIsInstance(repository.gateway, StubGateway)
+
+
+    def test_build_spreadsheet_repository_registers_default_google_sheets_factory(self) -> None:
+        repository = build_spreadsheet_repository(
+            env={
+                "VIGILANCE_SPREADSHEET_BACKEND": "google_sheets",
+                "VIGILANCE_SPREADSHEET_GOOGLE_ID": "sheet-123",
+                "VIGILANCE_GOOGLE_SHEETS_MODE": "read_only",
+            },
+        )
+
+        self.assertIsInstance(repository.gateway, GoogleSheetsTableGateway)
 
     def test_build_spreadsheet_repository_requires_registered_backend_factory(self) -> None:
         with self.assertRaises(SpreadsheetGatewayFactoryError):
