@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Protocol
 
-from .models import AssetRecord, normalize_last_updated
+from .models import AssetRecord, build_asset_record, normalize_last_updated
 from .schema import AssetSchemaCatalog, FieldDefinition, load_schema_catalog
 
 ASSETS_SHEET_NAME = "ASSETS"
@@ -50,12 +50,10 @@ class AssetSpreadsheetMapper:
 
     def __init__(self, catalog: AssetSchemaCatalog | None = None) -> None:
         self.catalog = catalog or load_schema_catalog()
-        field_definitions = [*self.catalog.common_fields]
-        for fields in self.catalog.category_fields.values():
-            field_definitions.extend(fields)
+        field_definitions = self._all_field_definitions()
         self._fields_by_name = {field.name: field for field in field_definitions}
-        self._headers_by_name = {field.name: field.sheet_header for field in field_definitions}
         self._names_by_header = {field.sheet_header: field.name for field in field_definitions}
+        self._ordered_headers = self._build_ordered_headers(field_definitions)
 
     @property
     def sheet_name(self) -> str:
@@ -63,12 +61,7 @@ class AssetSpreadsheetMapper:
 
     @property
     def ordered_headers(self) -> tuple[str, ...]:
-        headers = [field.sheet_header for field in self.catalog.common_fields]
-        for fields in self.catalog.category_fields.values():
-            for field in fields:
-                if field.sheet_header not in headers:
-                    headers.append(field.sheet_header)
-        return tuple(headers)
+        return self._ordered_headers
 
     def row_to_payload(self, row: RowData) -> dict[str, Any]:
         payload: dict[str, Any] = {}
@@ -82,10 +75,7 @@ class AssetSpreadsheetMapper:
         return payload
 
     def row_to_asset(self, row: RowData) -> AssetRecord:
-        payload = self.row_to_payload(row)
-        from .models import build_asset_record
-
-        return build_asset_record(payload)
+        return build_asset_record(self.row_to_payload(row))
 
     def asset_to_row(self, asset: AssetRecord) -> RowData:
         payload = asset.to_dict()
@@ -101,6 +91,8 @@ class AssetSpreadsheetMapper:
         return row
 
     def _deserialize_cell(self, field: FieldDefinition, value: CellValue) -> Any:
+        """Convert a sheet cell into a schema-keyed payload value."""
+
         if value in (None, ""):
             return None
         if field.name == "Last_Updated":
@@ -119,9 +111,26 @@ class AssetSpreadsheetMapper:
         return value
 
     def _serialize_cell(self, field: FieldDefinition, value: Any) -> CellValue:
+        """Convert a schema-keyed payload value into a sheet cell representation."""
+
         if value is None:
             return None
         if field.name == "Last_Updated":
             normalized = normalize_last_updated(value)
             return normalized.isoformat() if normalized is not None else None
         return value
+
+    def _all_field_definitions(self) -> tuple[FieldDefinition, ...]:
+        return self.catalog.common_fields + tuple(
+            field
+            for category_fields in self.catalog.category_fields.values()
+            for field in category_fields
+        )
+
+    @staticmethod
+    def _build_ordered_headers(field_definitions: tuple[FieldDefinition, ...]) -> tuple[str, ...]:
+        ordered_headers: list[str] = []
+        for field_definition in field_definitions:
+            if field_definition.sheet_header not in ordered_headers:
+                ordered_headers.append(field_definition.sheet_header)
+        return tuple(ordered_headers)

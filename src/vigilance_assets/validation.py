@@ -13,6 +13,8 @@ from .schema import AssetSchemaCatalog, FieldDefinition, load_schema_catalog
 
 @dataclass(frozen=True, slots=True)
 class InventoryValidationIssue:
+    """Issue found while auditing existing inventory payloads."""
+
     asset_id: str | None
     category: str | None
     field: str
@@ -24,6 +26,8 @@ class InventoryValidationIssue:
 
 @dataclass(frozen=True, slots=True)
 class AssetValidationSummary:
+    """Per-asset summary entry for quality reports."""
+
     asset_id: str | None
     category: str | None
     row_number: int | None
@@ -32,6 +36,8 @@ class AssetValidationSummary:
 
 @dataclass(frozen=True, slots=True)
 class InventoryValidationReport:
+    """Aggregate validation report for an inventory snapshot."""
+
     total_assets: int
     assets_with_issues: int
     issue_count: int
@@ -40,18 +46,24 @@ class InventoryValidationReport:
 
 @dataclass(frozen=True, slots=True)
 class ValidationIssue:
+    """Validation error exposed to callers for create/update operations."""
+
     field: str
     message: str
     code: str
 
 
 class ValidationError(ValueError):
+    """Raised when one or more validation issues are detected."""
+
     def __init__(self, issues: Iterable[ValidationIssue]):
         self.issues = list(issues)
         super().__init__("; ".join(f"{issue.field}: {issue.message}" for issue in self.issues))
 
 
 class AssetValidator:
+    """Validate schema-keyed asset payloads against the canonical catalog."""
+
     def __init__(self, catalog: AssetSchemaCatalog | None = None) -> None:
         self.catalog = catalog or load_schema_catalog()
 
@@ -59,13 +71,13 @@ class AssetValidator:
         self,
         payload: dict[str, Any],
         existing_asset_ids: set[str] | None = None,
-    ):
+    ) -> AssetRecord:
         issues = self._validate_payload(payload, partial=False, existing_asset_ids=existing_asset_ids)
         if issues:
             raise ValidationError(issues)
         return build_asset_record(payload)
 
-    def validate_for_patch(self, category: str, payload: dict[str, Any]):
+    def validate_for_patch(self, category: str, payload: dict[str, Any]) -> dict[str, Any]:
         merged = {"Asset_Category": category, **payload}
         issues = self._validate_payload(merged, partial=True, existing_asset_ids=None)
         if issues:
@@ -77,7 +89,7 @@ class AssetValidator:
         payload: dict[str, Any],
         *,
         expected_asset_id: str | None = None,
-    ):
+    ) -> AssetRecord:
         issues = self._validate_payload(payload, partial=False, existing_asset_ids=None)
         if expected_asset_id is not None and payload.get(self.catalog.id_field) != expected_asset_id:
             issues.append(

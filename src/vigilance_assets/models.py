@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, fields
 from datetime import date, datetime, timezone
 from typing import Any
 
@@ -102,6 +102,8 @@ CATEGORY_MODEL_TYPES: dict[str, type[CategorySpecificFields]] = {
 
 @dataclass(slots=True)
 class AssetRecord:
+    """Domain-level asset composed of common and category-specific fields."""
+
     common: CommonAssetFields
     category_fields: CategorySpecificFields
 
@@ -120,6 +122,8 @@ class AssetRecord:
 
 
 def normalize_last_updated(value: str | date | datetime | None) -> datetime | None:
+    """Normalize supported Last_Updated inputs to a timezone-aware UTC datetime."""
+
     if value is None or value == "":
         return None
     if isinstance(value, datetime):
@@ -131,10 +135,12 @@ def normalize_last_updated(value: str | date | datetime | None) -> datetime | No
 
 
 def build_asset_record(payload: dict[str, Any]) -> AssetRecord:
+    """Build a typed asset record from a schema-keyed payload."""
+
     category = payload["Asset_Category"]
     category_model = CATEGORY_MODEL_TYPES[category]
 
-    common_field_names = set(CommonAssetFields.__annotations__.keys())
+    common_field_names = {field.name for field in fields(CommonAssetFields)}
     common_payload = {
         key: (normalize_last_updated(value) if key == "Last_Updated" else value)
         for key, value in payload.items()

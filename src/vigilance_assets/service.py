@@ -16,6 +16,7 @@ from .repository import (
 from .validation import (
     AssetValidationSummary,
     AssetValidator,
+    InventoryValidationIssue,
     InventoryValidationReport,
     ValidationError,
     ValidationIssue,
@@ -70,8 +71,9 @@ class AssetService:
     def get_category_schema(self, category: str) -> AssetSchemaView:
         return self.repository.get_category_schema(category)
 
-
     def get_asset_quality_report(self) -> InventoryValidationReport:
+        """Audit the current inventory against the canonical schema and rules."""
+
         inventory_payloads = self.repository.iter_inventory_payloads()
         duplicate_counts = Counter(
             payload.payload.get(self.repository.catalog.id_field)
@@ -80,7 +82,7 @@ class AssetService:
         )
         duplicate_asset_ids = {asset_id for asset_id, count in duplicate_counts.items() if count > 1}
 
-        issues = []
+        issues: list[InventoryValidationIssue] = []
         asset_summaries: list[AssetValidationSummary] = []
         for inventory_payload in inventory_payloads:
             payload = dict(inventory_payload.payload)
@@ -152,6 +154,8 @@ class AssetService:
         *,
         updated_by: str | None,
     ) -> dict[str, Any]:
+        """Apply server-managed mutation metadata without changing caller payloads."""
+
         prepared = dict(payload)
         prepared["Last_Updated"] = self._now_provider()
         if updated_by is not None:
