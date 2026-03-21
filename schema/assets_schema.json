@@ -1,0 +1,677 @@
+{
+  "schema_name": "vigilance_t23_assets",
+  "version": "0.1.0",
+  "source": {
+    "workbook": "T2.3 ASSET & TECHNOLOGY INVENTORY_model_v0.2.xlsx",
+    "sheet": "ASSETS",
+    "notes": [
+      "Schema is derived from the ASSETS sheet headers and workbook guidance.",
+      "The Guidelines sheet mentions AuthN_AuthZ for Platform / Service, but that column is not present in the current ASSETS sheet and is excluded here."
+    ]
+  },
+  "resource": {
+    "name": "asset",
+    "id_field": "Asset_ID"
+  },
+  "validation_rules": {
+    "trl_range": {
+      "min": 1,
+      "max": 9
+    },
+    "documentation_link_format": "url",
+    "last_updated_formats": ["date", "datetime"],
+    "category_specific_exclusivity": true
+  },
+  "vocabularies": {
+    "Asset_Category": [
+      "Cybersecurity Tool",
+      "Platform / Service",
+      "Compute Resource",
+      "Data Stream / Data Source / Telemetry",
+      "Data Store / Message Backbone",
+      "Physical / Cyber-Physical Asset"
+    ],
+    "Deployment_Context": [
+      "IT",
+      "OT",
+      "IoT",
+      "Cloud",
+      "Hybrid"
+    ],
+    "Status": [
+      "Not Started",
+      "Planned",
+      "Active",
+      "Deprecated"
+    ],
+    "Tool_Type": [
+      "SIEM (Security Information and Event Management)",
+      "EDR (Endpoint Detection and Response)",
+      "IAM (Identity and Access Management)",
+      "TEM (Threat Exposure Management)",
+      "Scanner (Vulnerability / Security Scanner)",
+      "Red Teaming",
+      "Policy Engine",
+      "Threat Intelligence",
+      "N/A"
+    ],
+    "Service_Type": [
+      "Platform Infrastructure",
+      "Policy Management",
+      "Security Service",
+      "Reasoning / Analytics",
+      "Identity",
+      "Data Management",
+      "Integration / API Service",
+      "N/A"
+    ],
+    "Compute_Form": [
+      "VM",
+      "Container",
+      "Kubernetes Cluster",
+      "Edge Node",
+      "Bare Metal",
+      "N/A"
+    ],
+    "Security_Function": [
+      "Prevent",
+      "Detect",
+      "Respond",
+      "Recover",
+      "Investigate",
+      "Monitor",
+      "Assess",
+      "Govern",
+      "N/A"
+    ],
+    "Criticality": [
+      "Low",
+      "Medium",
+      "High"
+    ],
+    "Code_Availability": [
+      "Yes",
+      "Partial",
+      "No",
+      "TBD"
+    ],
+    "Security_Domain": [
+      "Network Security",
+      "Endpoint Security",
+      "Identity Security",
+      "Application Security",
+      "Data Security",
+      "Cloud Security",
+      "OT Security",
+      "IoT Security",
+      "Multi-domain",
+      "N/A"
+    ],
+    "Sharing_Policy": [
+      "Public",
+      "Consortium-internal",
+      "Pilot-restricted",
+      "Restricted",
+      "Confidential",
+      "N/A"
+    ]
+  },
+  "common_fields": [
+    {
+      "name": "Asset_ID",
+      "sheet_header": "Asset_ID",
+      "type": "string",
+      "required": true,
+      "nullable": false,
+      "description": "Unique stable identifier for the asset.",
+      "filterable": true,
+      "sortable": true,
+      "searchable": false,
+      "updatable": false
+    },
+    {
+      "name": "Asset_Name",
+      "sheet_header": "Asset_Name",
+      "type": "string",
+      "required": true,
+      "nullable": false,
+      "description": "Human-readable asset name.",
+      "filterable": true,
+      "sortable": true,
+      "searchable": true,
+      "updatable": true
+    },
+    {
+      "name": "Asset_Category",
+      "sheet_header": "Asset_Category",
+      "type": "string",
+      "required": true,
+      "nullable": false,
+      "enum_ref": "Asset_Category",
+      "description": "High-level category of the asset.",
+      "filterable": true,
+      "sortable": true,
+      "searchable": false,
+      "updatable": true
+    },
+    {
+      "name": "Owner_Org",
+      "sheet_header": "Owner_Org",
+      "type": "string",
+      "required": true,
+      "nullable": false,
+      "description": "Owning or responsible organisation.",
+      "filterable": true,
+      "sortable": true,
+      "searchable": true,
+      "updatable": true
+    },
+    {
+      "name": "Owner_Contact",
+      "sheet_header": "Owner_Contact",
+      "type": "string",
+      "required": true,
+      "nullable": false,
+      "description": "Responsible contact for the asset.",
+      "filterable": true,
+      "sortable": false,
+      "searchable": true,
+      "updatable": true
+    },
+    {
+      "name": "Pilot_s",
+      "sheet_header": "Pilot (s)",
+      "type": "string",
+      "required": true,
+      "nullable": false,
+      "description": "Pilot or pilots using the asset, or N/A.",
+      "filterable": true,
+      "sortable": false,
+      "searchable": true,
+      "updatable": true
+    },
+    {
+      "name": "Purpose",
+      "sheet_header": "Purpose (1-2 sentences)",
+      "type": "string",
+      "required": true,
+      "nullable": false,
+      "description": "Short description of the asset's role.",
+      "filterable": false,
+      "sortable": false,
+      "searchable": true,
+      "updatable": true
+    },
+    {
+      "name": "Status",
+      "sheet_header": "Status",
+      "type": "string",
+      "required": true,
+      "nullable": false,
+      "enum_ref": "Status",
+      "description": "Lifecycle status of the asset.",
+      "filterable": true,
+      "sortable": true,
+      "searchable": false,
+      "updatable": true
+    },
+    {
+      "name": "TRL_Start",
+      "sheet_header": "TRL_Start",
+      "type": "integer",
+      "required": true,
+      "nullable": false,
+      "constraints": {
+        "min": 1,
+        "max": 9
+      },
+      "description": "Technology Readiness Level at project start.",
+      "filterable": true,
+      "sortable": true,
+      "searchable": false,
+      "updatable": true
+    },
+    {
+      "name": "TRL_Current",
+      "sheet_header": "TRL_Current",
+      "type": "integer",
+      "required": false,
+      "nullable": true,
+      "constraints": {
+        "min": 1,
+        "max": 9
+      },
+      "description": "Current Technology Readiness Level.",
+      "filterable": true,
+      "sortable": true,
+      "searchable": false,
+      "updatable": true
+    },
+    {
+      "name": "TRL_Target",
+      "sheet_header": "TRL_Target",
+      "type": "integer",
+      "required": true,
+      "nullable": false,
+      "constraints": {
+        "min": 1,
+        "max": 9
+      },
+      "description": "Target Technology Readiness Level.",
+      "filterable": true,
+      "sortable": true,
+      "searchable": false,
+      "updatable": true
+    },
+    {
+      "name": "Related_Result",
+      "sheet_header": "Related_Result",
+      "type": "string",
+      "required": true,
+      "nullable": false,
+      "description": "Related project result identifier or N/A.",
+      "filterable": true,
+      "sortable": false,
+      "searchable": true,
+      "updatable": true
+    },
+    {
+      "name": "Related_WP_Task",
+      "sheet_header": "Related_WP_Task",
+      "type": "string",
+      "required": true,
+      "nullable": false,
+      "description": "Related work package task identifier.",
+      "filterable": true,
+      "sortable": false,
+      "searchable": true,
+      "updatable": true
+    },
+    {
+      "name": "Deployment_Context",
+      "sheet_header": "Deployment_Context",
+      "type": "string",
+      "required": true,
+      "nullable": false,
+      "enum_ref": "Deployment_Context",
+      "description": "Deployment context of the asset.",
+      "filterable": true,
+      "sortable": true,
+      "searchable": false,
+      "updatable": true
+    },
+    {
+      "name": "Standards_Compliance",
+      "sheet_header": "Standards_Compliance",
+      "type": "string",
+      "required": false,
+      "nullable": true,
+      "description": "Standards, frameworks, or compliance references.",
+      "filterable": false,
+      "sortable": false,
+      "searchable": true,
+      "updatable": true
+    },
+    {
+      "name": "Security_Domain",
+      "sheet_header": "Security_Domain",
+      "type": "string",
+      "required": false,
+      "nullable": true,
+      "enum_ref": "Security_Domain",
+      "description": "Primary security domain of the asset.",
+      "filterable": true,
+      "sortable": true,
+      "searchable": false,
+      "updatable": true
+    },
+    {
+      "name": "Documentation_Link",
+      "sheet_header": "Documentation_Link",
+      "type": "string",
+      "required": false,
+      "nullable": true,
+      "format": "url",
+      "description": "Reference URL for documentation.",
+      "filterable": false,
+      "sortable": false,
+      "searchable": false,
+      "updatable": true
+    },
+    {
+      "name": "Last_Updated",
+      "sheet_header": "Last_Updated",
+      "type": "datetime",
+      "required": true,
+      "nullable": false,
+      "description": "Date or datetime of last update.",
+      "filterable": true,
+      "sortable": true,
+      "searchable": false,
+      "updatable": true,
+      "server_managed": true
+    },
+    {
+      "name": "Updated_By",
+      "sheet_header": "Updated_By",
+      "type": "string",
+      "required": true,
+      "nullable": false,
+      "description": "User, organisation, or service that last updated the record.",
+      "filterable": true,
+      "sortable": false,
+      "searchable": true,
+      "updatable": true,
+      "server_managed": true
+    }
+  ],
+  "category_fields": {
+    "Cybersecurity Tool": [
+      {
+        "name": "Tool_Type",
+        "sheet_header": "Tool_Type",
+        "type": "string",
+        "required": true,
+        "nullable": false,
+        "enum_ref": "Tool_Type",
+        "description": "Functional classification of the cybersecurity tool."
+      },
+      {
+        "name": "Security_Function",
+        "sheet_header": "Security_Function",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "enum_ref": "Security_Function",
+        "description": "Primary security function performed by the tool."
+      },
+      {
+        "name": "Interfaces_Provided",
+        "sheet_header": "Interfaces_Provided",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Interfaces or APIs exposed by the tool."
+      },
+      {
+        "name": "Interfaces_Consumed",
+        "sheet_header": "Interfaces_Consumed",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Interfaces or APIs consumed by the tool."
+      },
+      {
+        "name": "Dependencies",
+        "sheet_header": "Dependencies",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Dependencies required by the tool."
+      },
+      {
+        "name": "Code_Availability",
+        "sheet_header": "Code_Availability",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "enum_ref": "Code_Availability",
+        "description": "Code availability status."
+      },
+      {
+        "name": "License_IP",
+        "sheet_header": "License_IP",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Licensing or intellectual-property conditions."
+      }
+    ],
+    "Platform / Service": [
+      {
+        "name": "Service_Type",
+        "sheet_header": "Service_Type",
+        "type": "string",
+        "required": true,
+        "nullable": false,
+        "enum_ref": "Service_Type",
+        "description": "Functional classification of the platform or service."
+      },
+      {
+        "name": "Inputs",
+        "sheet_header": "Inputs",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Inputs consumed by the service."
+      },
+      {
+        "name": "Outputs",
+        "sheet_header": "Outputs",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Outputs produced by the service."
+      },
+      {
+        "name": "Scalability_Mode",
+        "sheet_header": "Scalability_Mode",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Scalability characteristic of the service."
+      }
+    ],
+    "Compute Resource": [
+      {
+        "name": "Compute_Form",
+        "sheet_header": "Compute_Form",
+        "type": "string",
+        "required": true,
+        "nullable": false,
+        "enum_ref": "Compute_Form",
+        "description": "Form factor of the compute resource."
+      },
+      {
+        "name": "OS_Runtime",
+        "sheet_header": "OS_Runtime",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Operating system or runtime environment."
+      },
+      {
+        "name": "Min_CPU",
+        "sheet_header": "Min_CPU",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Minimum CPU requirement."
+      },
+      {
+        "name": "Min_RAM",
+        "sheet_header": "Min_RAM",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Minimum RAM requirement."
+      },
+      {
+        "name": "GPU",
+        "sheet_header": "GPU",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "GPU requirement or availability."
+      },
+      {
+        "name": "Storage",
+        "sheet_header": "Storage",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Storage requirement or capacity."
+      },
+      {
+        "name": "Network_Ports",
+        "sheet_header": "Network_Ports",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Port or networking requirements."
+      }
+    ],
+    "Data Stream / Data Source / Telemetry": [
+      {
+        "name": "Telemetry_Type",
+        "sheet_header": "Telemetry_Type",
+        "type": "string",
+        "required": true,
+        "nullable": false,
+        "description": "Type of telemetry or data source."
+      },
+      {
+        "name": "Data_Format",
+        "sheet_header": "Data_Format",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Format of the data."
+      },
+      {
+        "name": "Frequency",
+        "sheet_header": "Frequency",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Generation or transmission frequency."
+      },
+      {
+        "name": "Data_Sensitivity",
+        "sheet_header": "Data_Sensitivity",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Sensitivity of the data."
+      },
+      {
+        "name": "Sharing_Policy",
+        "sheet_header": "Sharing_Policy",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "enum_ref": "Sharing_Policy",
+        "description": "Sharing policy for the data."
+      }
+    ],
+    "Data Store / Message Backbone": [
+      {
+        "name": "Store_Type",
+        "sheet_header": "Store_Type",
+        "type": "string",
+        "required": true,
+        "nullable": false,
+        "description": "Type of storage or messaging component."
+      },
+      {
+        "name": "Technology",
+        "sheet_header": "Technology",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Underlying technology."
+      },
+      {
+        "name": "Retention",
+        "sheet_header": "Retention",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Retention policy or duration."
+      },
+      {
+        "name": "Encryption",
+        "sheet_header": "Encryption",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Encryption status or mechanism."
+      }
+    ],
+    "Physical / Cyber-Physical Asset": [
+      {
+        "name": "Asset_Subtype",
+        "sheet_header": "Asset_Subtype",
+        "type": "string",
+        "required": true,
+        "nullable": false,
+        "description": "Subtype of the physical or cyber-physical asset."
+      },
+      {
+        "name": "Connectivity",
+        "sheet_header": "Connectivity",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Connectivity interfaces or protocols."
+      },
+      {
+        "name": "Firmware_Version",
+        "sheet_header": "Firmware_Version",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Firmware or software version."
+      },
+      {
+        "name": "Criticality",
+        "sheet_header": "Criticality",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "enum_ref": "Criticality",
+        "description": "Operational or security criticality."
+      },
+      {
+        "name": "Constraints",
+        "sheet_header": "Constraints",
+        "type": "string",
+        "required": false,
+        "nullable": true,
+        "description": "Operational, safety, regulatory, or technical constraints."
+      }
+    ]
+  },
+  "search_defaults": {
+    "default_searchable_fields": [
+      "Asset_Name",
+      "Owner_Org",
+      "Owner_Contact",
+      "Pilot_s",
+      "Purpose",
+      "Related_Result",
+      "Related_WP_Task"
+    ],
+    "default_filterable_fields": [
+      "Asset_Category",
+      "Owner_Org",
+      "Status",
+      "Deployment_Context",
+      "Security_Domain",
+      "Pilot_s",
+      "Related_WP_Task"
+    ],
+    "default_sortable_fields": [
+      "Asset_ID",
+      "Asset_Name",
+      "Asset_Category",
+      "Owner_Org",
+      "Status",
+      "TRL_Start",
+      "TRL_Current",
+      "TRL_Target",
+      "Deployment_Context",
+      "Last_Updated"
+    ]
+  }
+}
