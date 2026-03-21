@@ -109,7 +109,7 @@ Responsible for:
 
 ## Current storage strategy
 
-The repository includes a spreadsheet-backed implementation, `SpreadsheetAssetRepository`, but it does **not** directly read or write Excel or Google Sheets APIs. Instead, it depends on a `SpreadsheetTableGateway` protocol that exposes header-keyed row operations:
+The repository includes a spreadsheet-backed implementation, `SpreadsheetAssetRepository`, and it still keeps Google Sheets concerns behind the `SpreadsheetTableGateway` protocol so the service and domain layers stay storage-agnostic. The concrete Google Sheets adapter maps values by header name and exposes the same header-keyed row operations to the repository:
 
 - `list_rows(sheet_name)`
 - `append_row(sheet_name, values)`
@@ -123,9 +123,7 @@ This means the current strategy is:
 3. map rows by sheet header names through `AssetSpreadsheetMapper`
 4. keep the service and route layers backend-agnostic
 
-At the moment, the repository is ready for integration with a real spreadsheet backend, but this repository does not yet ship a production Excel/Google Sheets adapter. Tests use in-memory fakes and test repositories to exercise behavior.
-
-Infrastructure preparation for future adapters is available through `vigilance_assets.config` and `vigilance_assets.infrastructure`. Runtime settings can be loaded from `VIGILANCE_`-prefixed environment variables, and concrete gateway factories can be registered for `google_sheets` or `workbook` backends without introducing SDK-specific code into the domain, repository contract, or service layers.
+This repository now ships a real Google Sheets adapter for the `google_sheets` backend. The adapter uses the Google Sheets API for authenticated read/write flows when service-account credentials are present, and it falls back to public read-only access through Google's `gviz` endpoint when the target workbook is readable without authentication. The repository, validator, and service layers remain unchanged because the integration is isolated in the gateway/infrastructure layer.
 
 ## Canonical asset model summary
 
@@ -805,7 +803,7 @@ pip install -e .
 
 ### Start the Flask app
 
-This repository exposes `create_app`, but it does not yet include a packaged production entrypoint or a built-in real spreadsheet gateway. The easiest local run flow for development is to create a small bootstrap script that wires `create_app()` to a repository implementation.
+This repository exposes `create_app` and also includes `src/vigilance_assets/wsgi.py`, which can boot the service from environment variables. You can still create a small bootstrap script for custom wiring, but the built-in runtime path now supports both the in-memory backend and the Google Sheets adapter.
 
 ### Explore the API in Swagger UI
 
@@ -837,7 +835,7 @@ You can save that as `dev_server.py` and run:
 python dev_server.py
 ```
 
-If you are integrating a real spreadsheet backend, instantiate `SpreadsheetAssetRepository(workbook_reference=..., gateway=...)` and pass it into `AssetService` or directly to `create_app(repository=...)`.
+If you need custom wiring, instantiate `SpreadsheetAssetRepository(workbook_reference=..., gateway=...)` and pass it into `AssetService` or directly to `create_app(repository=...)`. The packaged Google Sheets gateway is also available through `build_spreadsheet_repository()` when `VIGILANCE_SPREADSHEET_BACKEND=google_sheets`.
 
 ## Running tests
 
@@ -864,7 +862,7 @@ The test suite covers:
 - `GET /assets` currently only accepts the repository catalog's default filterable fields; category-specific filters such as `Tool_Type` are intentionally rejected at the API layer today.
 - `GET /assets/quality` is implemented in addition to the base CRUD/schema/vocabulary requirements and returns a machine-readable audit of inventory-level issues.
 - `DELETE /assets` defaults to archive semantics by setting `Status` to `Deprecated` in the spreadsheet-backed repository.
-- The repository is architected for spreadsheet-backed persistence, but a concrete production spreadsheet gateway is still expected to be provided by an integrator.
+- The repository is architected for spreadsheet-backed persistence, and the repository now includes a production-oriented Google Sheets gateway adapter plus a public-read fallback mode.
 
 
 ## Containerized execution
@@ -877,6 +875,73 @@ The repository now includes a production-oriented container image for running th
 - `.dockerignore` - keeps the image build context small and excludes local caches, tests, and VCS metadata
 - `docker-compose.yml` - convenient local runner for `docker compose`
 - `src/vigilance_assets/wsgi.py` - environment-driven application entry point for container startup
+
+
+### Google Sheets integration
+
+The target workbook for this service is:
+
+- `https://docs.google.com/spreadsheets/d/1swJWxXlgjbzYJmcFV1OYBmezN4a9Co6L/edit?usp=sharing&ouid=115779205122299954148&rtpof=true&sd=true`
+
+The Google Sheets adapter is implemented as a concrete `SpreadsheetTableGateway` so the repository/service/domain contracts stay storage-agnostic. It always maps cells by worksheet header names, never by hardcoded column indexes.
+
+#### Read-only fallback
+
+If the workbook is publicly readable, you can run the service in safe read-only mode without Google API credentials:
+
+```bash
+export VIGILANCE_SPREADSHEET_BACKEND=google_sheets
+export VIGILANCE_SPREADSHEET_GOOGLE_ID=1swJWxXlgjbzYJmcFV1OYBmezN4a9Co6L
+export VIGILANCE_ASSETS_SHEET_NAME=ASSETS
+export VIGILANCE_GOOGLE_SHEETS_MODE=read_only
+```
+
+In this mode, `GET` endpoints work against the public worksheet, while create/update/delete operations fail fast with a configuration error instead of attempting unsafe writes.
+
+#### Full authenticated read/write setup
+
+For `POST`, `PATCH`, `PUT`, and `DELETE` support, configure a Google Cloud service account with Google Sheets API access:
+
+1. Create or select a Google Cloud project.
+2. Enable the **Google Sheets API** for that project.
+3. Create a **service account** for server-to-server access.
+4. Create a JSON key for that service account, or capture the credential JSON securely for injection through an environment variable.
+5. Share the target spreadsheet with the service-account email address and grant it **Editor** access if you want write operations. Viewer access is sufficient for authenticated reads only.
+6. Set the runtime mode to `read_write` (or `auto`, which will use the API path when credentials are present).
+
+Example using a credential file:
+
+```bash
+export VIGILANCE_SPREADSHEET_BACKEND=google_sheets
+export VIGILANCE_SPREADSHEET_GOOGLE_ID=1swJWxXlgjbzYJmcFV1OYBmezN4a9Co6L
+export VIGILANCE_ASSETS_SHEET_NAME=ASSETS
+export VIGILANCE_GOOGLE_SHEETS_MODE=read_write
+export VIGILANCE_GOOGLE_CREDENTIALS_PATH=/run/secrets/google-service-account.json
+```
+
+Example using inline JSON:
+
+```bash
+export VIGILANCE_GOOGLE_CREDENTIALS_JSON='{"type":"service_account", ...}'
+```
+
+#### Mode behavior
+
+- `read_only`: always uses the public-read path and rejects writes.
+- `read_write`: requires credentials and uses the Google Sheets API for reads and writes.
+- `auto`: uses authenticated Google Sheets API access when credentials are available; otherwise it falls back to public read-only access.
+
+#### Error handling
+
+The adapter raises explicit backend errors for:
+
+- missing or invalid credentials
+- missing worksheets
+- duplicate or incomplete headers
+- malformed public responses
+- connectivity/API initialization failures
+
+This makes operational failures visible without leaking Google-specific concerns into the service layer.
 
 ### Runtime configuration
 
@@ -892,12 +957,13 @@ Common variables:
 - `VIGILANCE_SPREADSHEET_WORKBOOK_PATH` - workbook path when using `workbook`
 - `VIGILANCE_SPREADSHEET_WORKBOOK_READ_ONLY` - workbook read-only toggle when using `workbook`
 - `VIGILANCE_SPREADSHEET_GOOGLE_ID` - spreadsheet identifier when using `google_sheets`
+- `VIGILANCE_ASSETS_SHEET_NAME` - worksheet title for the asset inventory; default `ASSETS`
+- `VIGILANCE_VOCABULARIES_SHEET_NAME` - worksheet title for vocabularies; default `VOCABULARIES`
+- `VIGILANCE_GOOGLE_SHEETS_MODE` - Google Sheets access mode: `auto`, `read_only`, or `read_write`; default `auto`
 - `VIGILANCE_GOOGLE_CREDENTIALS_PATH` - credential file path for Google Sheets integrations
 - `VIGILANCE_GOOGLE_CREDENTIALS_JSON` - inline credential JSON for Google Sheets integrations
-- `VIGILANCE_ASSETS_SHEET_NAME` - assets sheet name override, default `ASSETS`
-- `VIGILANCE_VOCABULARIES_SHEET_NAME` - vocabularies sheet name override, default `VOCABULARIES`
 
-> Note: this repository currently ships an in-memory gateway suitable for local/container startup. The non-memory backends remain configuration-ready, but still require a registered spreadsheet gateway implementation before they can talk to a real workbook or Google Sheets backend.
+> Note: the built-in Google Sheets adapter can read the public workbook even without credentials when `VIGILANCE_GOOGLE_SHEETS_MODE=read_only` or when `mode=auto` and no credentials are supplied. Full create/update/delete support requires authenticated Google Sheets API access.
 
 ### Build the image
 

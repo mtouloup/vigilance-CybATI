@@ -19,6 +19,7 @@ class GoogleSheetsSettings:
     credentials_json: str | None = None
     assets_sheet_name: str = "ASSETS"
     vocabularies_sheet_name: str = "VOCABULARIES"
+    mode: str = "auto"
 
 
 @dataclass(frozen=True, slots=True)
@@ -44,6 +45,10 @@ class SpreadsheetBackendSettings:
         if self.backend == "workbook" and not self.workbook.path:
             raise ConfigurationError(
                 "VIGILANCE_SPREADSHEET_WORKBOOK_PATH must be set when backend is workbook."
+            )
+        if self.google_sheets.mode not in {"auto", "read_only", "read_write"}:
+            raise ConfigurationError(
+                "VIGILANCE_GOOGLE_SHEETS_MODE must be one of: auto, read_only, read_write."
             )
 
     @property
@@ -84,6 +89,7 @@ def load_runtime_settings(env: Mapping[str, str] | None = None) -> AppRuntimeSet
                 credentials_json=_read_optional_str(values, "GOOGLE_CREDENTIALS_JSON"),
                 assets_sheet_name=_read_str(values, "ASSETS_SHEET_NAME", default="ASSETS"),
                 vocabularies_sheet_name=_read_str(values, "VOCABULARIES_SHEET_NAME", default="VOCABULARIES"),
+                mode=_read_str(values, "GOOGLE_SHEETS_MODE", default="auto").lower(),
             ),
             workbook=WorkbookSettings(
                 path=_read_optional_str(values, "SPREADSHEET_WORKBOOK_PATH"),
