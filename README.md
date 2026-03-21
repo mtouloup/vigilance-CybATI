@@ -123,6 +123,8 @@ This means the current strategy is:
 
 At the moment, the repository is ready for integration with a real spreadsheet backend, but this repository does not yet ship a production Excel/Google Sheets adapter. Tests use in-memory fakes and test repositories to exercise behavior.
 
+Infrastructure preparation for future adapters is available through `vigilance_assets.config` and `vigilance_assets.infrastructure`. Runtime settings can be loaded from `VIGILANCE_`-prefixed environment variables, and concrete gateway factories can be registered for `google_sheets` or `workbook` backends without introducing SDK-specific code into the domain, repository contract, or service layers.
+
 ## Canonical asset model summary
 
 All assets share a common field set, including:
