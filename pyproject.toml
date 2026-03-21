@@ -9,6 +9,7 @@ description = "Internal domain models and validators for the VIGILANCE asset inv
 requires-python = ">=3.11"
 dependencies = [
     "Flask>=3.1,<4",
+    "swagger-ui-bundle>=1.1.0,<2",
 ]
 
 [tool.pytest.ini_options]
