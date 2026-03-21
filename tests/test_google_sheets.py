@@ -4,7 +4,7 @@ import unittest
 
 from vigilance_assets.google_sheets import GoogleSheetsConfigurationError, GoogleSheetsTableGateway
 from vigilance_assets.spreadsheet import AssetSpreadsheetMapper
-from vigilance_assets.config import GoogleSheetsSettings
+from vigilance_assets.config import GoogleSheetsSettings, SheetNames
 
 
 class _Response:
@@ -26,10 +26,13 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
         self.mapper = AssetSpreadsheetMapper()
         self.settings = GoogleSheetsSettings(
             spreadsheet_id='sheet-123',
-            assets_sheet_name='Inventory Assets',
             mode='read_only',
         )
-        self.gateway = GoogleSheetsTableGateway(settings=self.settings, expected_headers=self.mapper.ordered_headers)
+        self.gateway = GoogleSheetsTableGateway(
+            settings=self.settings,
+            sheet_names=SheetNames(assets='Inventory Assets'),
+            expected_headers=self.mapper.ordered_headers,
+        )
 
     def test_list_rows_reads_public_gviz_data_and_uses_configured_sheet_name(self) -> None:
         import vigilance_assets.google_sheets as module

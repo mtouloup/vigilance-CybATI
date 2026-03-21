@@ -8,7 +8,7 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import urlopen
 
-from .config import GoogleSheetsSettings, SpreadsheetBackendSettings
+from .config import GoogleSheetsSettings, SheetNames, SpreadsheetBackendSettings
 from .spreadsheet import RowData, SheetRecord, SpreadsheetBackendError, SpreadsheetTableGateway
 
 _GOOGLE_READ_SCOPES = ("https://www.googleapis.com/auth/spreadsheets",)
@@ -40,6 +40,7 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
     """Google Sheets adapter using API credentials when available and gviz fallback for public reads."""
 
     settings: GoogleSheetsSettings
+    sheet_names: SheetNames = SheetNames()
     expected_headers: Sequence[str] = ()
     timeout_seconds: float = 20.0
 
@@ -303,9 +304,9 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
 
     def _resolve_sheet_name(self, requested_sheet_name: str) -> str:
         if requested_sheet_name == "ASSETS":
-            return self.settings.assets_sheet_name
+            return self.sheet_names.assets
         if requested_sheet_name == "VOCABULARIES":
-            return self.settings.vocabularies_sheet_name
+            return self.sheet_names.vocabularies
         return requested_sheet_name
 
     def _ensure_write_enabled(self) -> None:
@@ -377,4 +378,8 @@ def build_google_sheets_gateway(settings: SpreadsheetBackendSettings) -> GoogleS
     from .spreadsheet import AssetSpreadsheetMapper
 
     mapper = AssetSpreadsheetMapper()
-    return GoogleSheetsTableGateway(settings=settings.google_sheets, expected_headers=mapper.ordered_headers)
+    return GoogleSheetsTableGateway(
+        settings=settings.google_sheets,
+        sheet_names=settings.sheets,
+        expected_headers=mapper.ordered_headers,
+    )
