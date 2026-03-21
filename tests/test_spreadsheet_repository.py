@@ -25,11 +25,34 @@ class FakeSpreadsheetGateway:
                     "Related_Result": "RS3",
                     "Related_WP_Task": "T5.3",
                     "Deployment_Context": "Cloud",
+                    "Security_Domain": "Cloud Security",
                     "Last_Updated": "2026-03-21T10:00:00+00:00",
                     "Updated_By": "alice@example.org",
                     "Tool_Type": "SIEM (Security Information and Event Management)",
                 },
-            )
+            ),
+            SheetRecord(
+                row_number=3,
+                values={
+                    "Asset_ID": "AST-003",
+                    "Asset_Name": "Telemetry Lake",
+                    "Asset_Category": "Platform / Service",
+                    "Owner_Org": "Consortium Ops",
+                    "Owner_Contact": "carol@example.org",
+                    "Pilot (s)": "Pilot B",
+                    "Purpose (1-2 sentences)": "Stores telemetry for reporting and analytics.",
+                    "Status": "Planned",
+                    "TRL_Start": 3,
+                    "TRL_Target": 6,
+                    "Related_Result": "RS4",
+                    "Related_WP_Task": "T5.4",
+                    "Deployment_Context": "Hybrid",
+                    "Security_Domain": "Data Security",
+                    "Last_Updated": "2026-03-20",
+                    "Updated_By": "carol@example.org",
+                    "Service_Type": "Data Management",
+                },
+            ),
         ]
 
     def list_rows(self, sheet_name: str) -> list[SheetRecord]:
@@ -66,7 +89,7 @@ class SpreadsheetRepositoryTests(unittest.TestCase):
         self.assertEqual(asset.common.Purpose, "Aggregates threat findings for analysts.")
         self.assertEqual(asset.common.TRL_Start, 4)
 
-    def test_list_assets_supports_filter_search_and_sort(self) -> None:
+    def test_list_assets_supports_filter_search_sort_and_pagination(self) -> None:
         created = self.repository.create_asset(
             self.repository.mapper.row_to_asset(
                 {
@@ -83,6 +106,7 @@ class SpreadsheetRepositoryTests(unittest.TestCase):
                     "Related_Result": "RS4",
                     "Related_WP_Task": "T5.4",
                     "Deployment_Context": "IT",
+                    "Security_Domain": "Endpoint Security",
                     "Last_Updated": "2026-03-22",
                     "Updated_By": "bob@example.org",
                     "Tool_Type": "EDR (Endpoint Detection and Response)",
@@ -93,15 +117,24 @@ class SpreadsheetRepositoryTests(unittest.TestCase):
 
         page = self.repository.list_assets(
             AssetListQuery(
-                filters={"Status": ["Active", "Deprecated"]},
+                filters={
+                    "Asset_Category": "Cybersecurity Tool",
+                    "Owner_Org": "OpenAI Security Lab",
+                    "Status": ("Active", "Deprecated"),
+                    "Pilot_s": ("Pilot A", "Pilot B"),
+                    "Deployment_Context": ("Cloud", "IT"),
+                    "Security_Domain": ("Cloud Security", "Endpoint Security"),
+                    "Related_WP_Task": ("T5.3", "T5.4"),
+                },
                 search="endpoint",
                 sort=(AssetSort(field="Asset_Name", direction="desc"),),
                 page=1,
-                page_size=10,
+                page_size=1,
             )
         )
 
         self.assertEqual(page.total, 1)
+        self.assertEqual(page.page_size, 1)
         self.assertEqual(page.items[0].asset_id, "AST-002")
 
     def test_asset_to_row_clears_non_category_columns(self) -> None:
