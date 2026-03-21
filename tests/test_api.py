@@ -249,6 +249,25 @@ class ApiTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["error"]["code"], "unsupported_category")
 
+
+    def test_openapi_json_exposes_documented_routes(self) -> None:
+        response = self.client.get('/openapi.json')
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload['openapi'], '3.0.3')
+        self.assertIn('/assets', payload['paths'])
+        self.assertIn('/vocabularies/{name}', payload['paths'])
+        self.assertIn('AssetPayload', payload['components']['schemas'])
+
+    def test_swagger_ui_endpoint_is_browser_accessible(self) -> None:
+        response = self.client.get('/docs')
+
+        self.assertEqual(response.status_code, 200)
+        body = response.get_data(as_text=True)
+        self.assertIn('SwaggerUIBundle', body)
+        self.assertIn('/openapi.json', body)
+
     def test_invalid_query_parameters_return_structured_bad_request(self) -> None:
         response = self.client.get("/assets?page=0")
 

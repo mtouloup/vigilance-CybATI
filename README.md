@@ -13,9 +13,9 @@ The service is designed around one core domain rule: one row in the `ASSETS` she
 
 The implementation currently provides:
 
-- CRUD-style asset endpoints over `/assets`
-- controlled vocabulary endpoints over `/vocabularies`
-- schema discovery endpoints over `/schema/assets`
+- blueprint-organized asset, vocabulary, schema, and quality-report endpoints
+- browser-explorable OpenAPI documentation with Swagger UI at `/docs`
+- machine-readable OpenAPI JSON at `/openapi.json`
 - spreadsheet-oriented storage abstractions that map by header name instead of column index
 - category-aware validation with field exclusivity rules
 - filtering, pagination, sorting, and free-text search for `GET /assets`
@@ -42,14 +42,16 @@ HTTP / Flask routes
 
 ### Layer responsibilities
 
-#### 1. API layer: `src/vigilance_assets/api.py`
+#### 1. API layer: `src/vigilance_assets/api.py`, `src/vigilance_assets/blueprints.py`, and `src/vigilance_assets/openapi.py`
 Responsible for:
 
-- creating the Flask application
+- creating the Flask application and registering Flask blueprints
+- separating asset, vocabulary, schema, and documentation routes into maintainable modules
 - parsing request bodies, headers, and query parameters
 - translating query strings into repository-level query objects
 - serializing domain records to JSON responses
 - mapping domain and validation exceptions to structured HTTP error responses
+- generating an OpenAPI document from the implemented routes and canonical schema catalog
 
 Not responsible for:
 
@@ -805,6 +807,16 @@ pip install -e .
 
 This repository exposes `create_app`, but it does not yet include a packaged production entrypoint or a built-in real spreadsheet gateway. The easiest local run flow for development is to create a small bootstrap script that wires `create_app()` to a repository implementation.
 
+### Explore the API in Swagger UI
+
+Once the app is running locally, open:
+
+- Swagger UI: `http://127.0.0.1:5000/docs`
+- OpenAPI JSON: `http://127.0.0.1:5000/openapi.json`
+
+The Swagger UI is generated from the implemented Flask routes plus the canonical asset schema catalog, so the documented request fields, filter parameters, and vocabulary-backed enums stay aligned with the API surface.
+
+
 Example development bootstrap using an in-memory/fake repository pattern:
 
 ```python
@@ -958,8 +970,14 @@ docker compose down
 
 ### Health check / quick verification
 
-After the container starts, verify the API is responding:
+After the container starts, verify the API and docs are responding:
 
 ```bash
 curl http://127.0.0.1:8000/schema/assets
+curl http://127.0.0.1:8000/openapi.json
 ```
+
+Open Swagger UI in the browser at:
+
+- Local container run: `http://127.0.0.1:8000/docs`
+- Docker Compose: `http://127.0.0.1:8000/docs`
