@@ -258,7 +258,28 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(payload['openapi'], '3.0.3')
         self.assertIn('/assets', payload['paths'])
         self.assertIn('/vocabularies/{name}', payload['paths'])
-        self.assertIn('AssetPayload', payload['components']['schemas'])
+        self.assertIn('/schema/assets/{category}', payload['paths'])
+        self.assertEqual(payload['paths']['/assets/{asset_id}']['delete']['parameters'][1]['schema']['default'], 'archive')
+
+    def test_docs_endpoint_serves_swagger_ui_html_with_configured_spec_url(self) -> None:
+        self.client.application.config['OPENAPI_SPEC_URL'] = '/custom/openapi.json'
+
+        response = self.client.get('/docs')
+
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn('SwaggerUIBundle', html)
+        self.assertIn("/custom/openapi.json", html)
+
+    def test_create_app_registers_expected_blueprints(self) -> None:
+        rules = {rule.rule for rule in self.client.application.url_map.iter_rules()}
+
+        self.assertIn('/assets', rules)
+        self.assertIn('/vocabularies', rules)
+        self.assertIn('/schema/assets', rules)
+        self.assertIn('/openapi.json', rules)
+        self.assertIn('/docs', rules)
+        self.assertIn('/swaggerui/<path:filename>', rules)
 
     def test_swagger_ui_endpoint_is_browser_accessible(self) -> None:
         response = self.client.get('/docs')
