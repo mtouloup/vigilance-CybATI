@@ -45,7 +45,8 @@ class InMemoryAssetRepository(AssetRepository):
         if asset_id not in self._assets:
             raise AssetNotFoundError(asset_id)
         self.deleted.append((asset_id, mode))
-        del self._assets[asset_id]
+        if mode == 'delete':
+            del self._assets[asset_id]
 
 
 class AssetServiceTests(unittest.TestCase):
@@ -118,6 +119,31 @@ class AssetServiceTests(unittest.TestCase):
         self.assertEqual(updated.common.Status, "Deprecated")
         self.assertEqual(updated.category_fields.Security_Function, "Monitor")
         self.assertEqual(updated.common.Updated_By, "editor@example.org")
+
+
+    def test_patch_asset_rejects_attempt_to_change_asset_id(self) -> None:
+        self.service.create_asset(self.base_payload, updated_by="creator@example.org")
+
+        with self.assertRaises(ValidationError) as exc:
+            self.service.patch_asset(
+                "AST-001",
+                {"Asset_ID": "AST-999"},
+                updated_by="editor@example.org",
+            )
+
+        self.assertTrue(any(issue.field == "Asset_ID" and issue.code == "immutable" for issue in exc.exception.issues))
+
+    def test_replace_asset_rejects_attempt_to_change_asset_id(self) -> None:
+        self.service.create_asset(self.base_payload, updated_by="creator@example.org")
+
+        with self.assertRaises(ValidationError) as exc:
+            self.service.replace_asset(
+                "AST-001",
+                {**self.base_payload, "Asset_ID": "AST-999"},
+                updated_by="editor@example.org",
+            )
+
+        self.assertTrue(any(issue.field == "Asset_ID" and issue.code == "immutable" for issue in exc.exception.issues))
 
     def test_replace_asset_requires_complete_valid_payload(self) -> None:
         self.service.create_asset(self.base_payload, updated_by="creator@example.org")
