@@ -2,19 +2,25 @@
 
 VIGILANCE T2.3 Cybersecurity Asset & Technology Inventory service.
 
-This Flask backend exposes the canonical inventory API defined by `docs/assets-schema.md` and `schema/assets_schema.json`, using a **public Google Sheet** as the storage backend. The application explicitly targets the `ASSETS` worksheet inside a workbook that may contain multiple tabs.
+This Flask backend exposes the canonical inventory API defined by `docs/assets-schema.md` and `schema/assets_schema.json`, using Google Sheets as the storage backend for the `ASSETS` worksheet only. The spreadsheet remains a storage implementation detail behind the repository and service layers.
 
-## Public Google Sheet behavior
+## Google Sheets runtime modes
 
-The backend now uses Google Sheets' **unauthenticated public CSV export** mechanism for the configured worksheet. That means:
+The backend now supports two explicit runtime modes:
 
-- no Google credentials are required
-- no service account is required
-- no OAuth flow is required
-- no credential JSON or credential file path is supported
-- the sheet must already be publicly accessible or published by design
+1. **Authenticated read/write mode** (default and recommended)
+   - uses the Google Sheets API
+   - authenticates with a Google service account
+   - enables full CRUD support for the `ASSETS` worksheet
+   - powers `POST`, `PATCH`, `PUT`, and `DELETE`
 
-Because this access path is public and unauthenticated, **read operations work, but write operations do not**. The API therefore runs in a deliberate **read-only mode** when backed by a public sheet. Mutating endpoints return a clear error instead of pretending to write.
+2. **Explicit public read-only mode**
+   - uses Google Sheets' unauthenticated public CSV export endpoint
+   - keeps `GET` endpoints working without Google credentials
+   - disables all mutation endpoints
+   - is enabled only when `VIGILANCE_GOOGLE_READ_ONLY_PUBLIC=true`
+
+At startup the app validates connectivity and logs whether it is running in `authenticated-read-write` or `public-read-only` mode.
 
 ## Canonical model
 
@@ -31,6 +37,23 @@ Important implementation rules:
 - the app validates records against the canonical schema
 - only the configured `ASSETS` worksheet is used for inventory data
 
+## Service-account setup
+
+To enable authenticated writes:
+
+1. Create or choose a Google Cloud project.
+2. Enable the **Google Sheets API** for that project.
+3. Create a **service account**.
+4. Generate a JSON key for the service account.
+5. Share the target Google Sheet with the service account's `client_email`.
+   - Give it **Editor** access for full CRUD support.
+6. Set `VIGILANCE_GOOGLE_SPREADSHEET_ID` to the workbook ID.
+7. Provide credentials through exactly one of:
+   - `VIGILANCE_GOOGLE_SERVICE_ACCOUNT_FILE`
+   - `VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON`
+
+If the service account is not shared on the sheet, authenticated startup will fail even if the credentials are otherwise valid.
+
 ## Environment variables
 
 The service reads runtime configuration from environment variables prefixed with `VIGILANCE_`.
@@ -38,13 +61,27 @@ The service reads runtime configuration from environment variables prefixed with
 ### Required
 
 - `VIGILANCE_GOOGLE_SPREADSHEET_ID`
-  - the Google Spreadsheet ID for the public workbook
+  - the Google Spreadsheet ID
+
+### Required for authenticated read/write mode
+
+Provide exactly one:
+
+- `VIGILANCE_GOOGLE_SERVICE_ACCOUNT_FILE`
+  - path to a Google service-account JSON file inside the runtime environment
+- `VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON`
+  - the raw JSON document as an environment variable value
 
 ### Optional
 
 - `VIGILANCE_GOOGLE_WORKSHEET_NAME`
   - defaults to `ASSETS`
-  - use this only if the asset worksheet tab has a different public tab name
+  - the backend still only supports the canonical asset worksheet
+- `VIGILANCE_GOOGLE_READ_ONLY_PUBLIC`
+  - default `false`
+  - set to `true` only if you intentionally want public-sheet read-only fallback
+- `VIGILANCE_LOG_LEVEL`
+  - default `INFO`
 - `VIGILANCE_PORT`
   - default local port override
 - `PORT`
@@ -56,16 +93,45 @@ The service reads runtime configuration from environment variables prefixed with
 - `GUNICORN_THREADS`
   - default `4` in Docker
 
+## CRUD behavior by mode
+
+### Authenticated read/write mode
+
+When credentials are configured and the service account has access to the spreadsheet:
+
+- `GET /assets`
+- `GET /assets/<asset_id>`
+- `GET /assets/quality`
+- `GET /vocabularies`
+- `GET /vocabularies/<name>`
+- `GET /schema/assets`
+- `GET /schema/assets/<category>`
+- `POST /assets`
+- `PATCH /assets/<asset_id>`
+- `PUT /assets/<asset_id>`
+- `DELETE /assets/<asset_id>`
+
+all operate against the Google Sheets `ASSETS` worksheet.
+
+### Explicit public read-only mode
+
+When `VIGILANCE_GOOGLE_READ_ONLY_PUBLIC=true` is set:
+
+- all `GET` endpoints remain available
+- `POST`, `PATCH`, `PUT`, and `DELETE` return a structured read-only error
+
+This fallback exists only for intentionally public deployments and is not enabled automatically.
+
 ## Spreadsheet expectations
 
-The configured workbook may contain multiple sheets, but this application reads only the worksheet configured by `VIGILANCE_GOOGLE_WORKSHEET_NAME`, which defaults to `ASSETS`.
+The configured workbook may contain multiple sheets, but this application reads and writes only the worksheet configured by `VIGILANCE_GOOGLE_WORKSHEET_NAME`, which defaults to `ASSETS`.
 
 Startup validates that:
 
 - a spreadsheet ID is configured
-- the target worksheet can be fetched through the public Google Sheets export endpoint
-- the first row contains the canonical headers from `schema/assets_schema.json`
-- there are no duplicate or unexpected headers
+- the target worksheet exists
+- the worksheet contains the canonical headers from `schema/assets_schema.json`
+- spreadsheet access works in the configured runtime mode
 
 ## Run locally with `python app.py`
 
@@ -78,18 +144,31 @@ pip install --upgrade pip
 pip install -e .
 ```
 
-Set environment variables directly or place them in a local `.env` file:
+### Option A: credentials file path
+
+```bash
+export VIGILANCE_GOOGLE_SPREADSHEET_ID=your_spreadsheet_id
+export VIGILANCE_GOOGLE_WORKSHEET_NAME=ASSETS
+export VIGILANCE_GOOGLE_SERVICE_ACCOUNT_FILE=$PWD/secrets/google-service-account.json
+export VIGILANCE_PORT=8000
+export VIGILANCE_DEBUG=true
+python app.py
+```
+
+### Option B: credentials JSON in an environment variable
+
+```bash
+export VIGILANCE_GOOGLE_SPREADSHEET_ID=your_spreadsheet_id
+export VIGILANCE_GOOGLE_WORKSHEET_NAME=ASSETS
+export VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON="$(cat ./secrets/google-service-account.json)"
+python app.py
+```
+
+### Optional explicit public read-only startup
 
 ```bash
 export VIGILANCE_GOOGLE_SPREADSHEET_ID=your_public_spreadsheet_id
-export VIGILANCE_GOOGLE_WORKSHEET_NAME=ASSETS
-export VIGILANCE_PORT=8000
-export VIGILANCE_DEBUG=true
-```
-
-Start the app:
-
-```bash
+export VIGILANCE_GOOGLE_READ_ONLY_PUBLIC=true
 python app.py
 ```
 
@@ -108,16 +187,30 @@ Build the image:
 docker build -t vigilance-assets .
 ```
 
-Run the container:
+### Docker with mounted service-account file
 
 ```bash
 docker run --rm -p 8000:8000 \
-  -e VIGILANCE_GOOGLE_SPREADSHEET_ID=your_public_spreadsheet_id \
+  -e VIGILANCE_GOOGLE_SPREADSHEET_ID=your_spreadsheet_id \
   -e VIGILANCE_GOOGLE_WORKSHEET_NAME=ASSETS \
+  -e VIGILANCE_GOOGLE_SERVICE_ACCOUNT_FILE=/run/secrets/google-service-account.json \
+  -v "$PWD/secrets/google-service-account.json:/run/secrets/google-service-account.json:ro" \
   vigilance-assets
 ```
 
-Or with Compose:
+### Docker with credentials JSON env var
+
+```bash
+docker run --rm -p 8000:8000 \
+  -e VIGILANCE_GOOGLE_SPREADSHEET_ID=your_spreadsheet_id \
+  -e VIGILANCE_GOOGLE_WORKSHEET_NAME=ASSETS \
+  -e VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON="$(cat ./secrets/google-service-account.json)" \
+  vigilance-assets
+```
+
+### Compose
+
+Set the relevant environment variables, then run:
 
 ```bash
 docker compose up --build
@@ -132,28 +225,3 @@ Swagger UI is served by the app at:
 The OpenAPI document is available at:
 
 - `http://localhost:8000/openapi.json`
-
-## API surface
-
-Read endpoints remain fully available:
-
-- `GET /assets`
-- `GET /assets/<asset_id>`
-- `GET /assets/quality`
-- `GET /vocabularies`
-- `GET /vocabularies/<name>`
-- `GET /schema/assets`
-- `GET /schema/assets/<category>`
-
-Mutation endpoints are still present for API compatibility, but public-sheet deployments return a clear read-only error:
-
-- `POST /assets`
-- `PATCH /assets/<asset_id>`
-- `PUT /assets/<asset_id>`
-- `DELETE /assets/<asset_id>`
-
-## Public-sheet write limitation
-
-Google's public export mechanisms provide anonymous reads, not authenticated edits. Within this repository's current spreadsheet-backed design, there is **no legitimate unauthenticated way** to perform safe writes back to a public Google Sheet.
-
-Accordingly, this backend intentionally does **not** fake write support. It keeps reads working against the public `ASSETS` worksheet and returns explicit read-only errors for mutations.

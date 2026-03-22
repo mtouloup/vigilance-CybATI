@@ -261,8 +261,8 @@ class SpreadsheetAssetRepository(AssetRepository):
     def _ensure_writable(self) -> None:
         if self.read_only:
             raise ReadOnlyRepositoryError(
-                "This deployment uses a publicly accessible Google Sheet through an unauthenticated export endpoint, "
-                "so asset mutations are disabled. Only read operations are supported."
+                "This deployment is running in explicit public read-only Google Sheets mode, so asset mutations are disabled. "
+                "Configure a service account to enable write operations."
             )
 
     def _require_gateway(self) -> SpreadsheetTableGateway:

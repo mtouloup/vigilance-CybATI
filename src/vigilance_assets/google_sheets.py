@@ -2,16 +2,26 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import re
 import unicodedata
 from dataclasses import dataclass
+import logging
+from pathlib import Path
 from typing import Any, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from google.oauth2.service_account import Credentials
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
+
 from .config import GoogleSheetsSettings
 from .spreadsheet import RowData, SheetRecord, SpreadsheetBackendError, SpreadsheetTableGateway
+
+LOGGER = logging.getLogger(__name__)
+SHEETS_API_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
 
 
 class GoogleSheetsConfigurationError(SpreadsheetBackendError):
@@ -19,7 +29,7 @@ class GoogleSheetsConfigurationError(SpreadsheetBackendError):
 
 
 class GoogleSheetsConnectivityError(SpreadsheetBackendError):
-    """Raised when the public Google Sheets backend cannot be reached."""
+    """Raised when the Google Sheets backend cannot be reached."""
 
 
 class GoogleSheetsWorksheetError(SpreadsheetBackendError):
@@ -27,7 +37,7 @@ class GoogleSheetsWorksheetError(SpreadsheetBackendError):
 
 
 class GoogleSheetsReadOnlyError(SpreadsheetBackendError):
-    """Raised when a mutation is requested against a public read-only sheet."""
+    """Raised when a mutation is requested against a read-only sheet."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,18 +59,18 @@ class HeaderSelection:
 
 @dataclass(slots=True)
 class GoogleSheetsTableGateway(SpreadsheetTableGateway):
-    """Public Google Sheets adapter for the canonical ASSETS worksheet.
+    """Google Sheets adapter for the canonical ASSETS worksheet.
 
-    The gateway intentionally uses the unauthenticated CSV export endpoint for a
-    publicly accessible worksheet. Google does not provide anonymous write
-    operations for Sheets through this approach, so mutation methods raise a
-    dedicated read-only error.
+    Authenticated mode uses the Google Sheets API with a service account and
+    supports read/write CRUD operations. Public mode is kept only as an
+    explicitly configured read-only fallback using the CSV export endpoint.
     """
 
     settings: GoogleSheetsSettings
     expected_headers: Sequence[str] = ()
     timeout_seconds: float = 20.0
     header_scan_limit: int = 10
+    api_service: Any | None = None
 
     def __post_init__(self) -> None:
         self._expected_headers = tuple(self.expected_headers)
@@ -68,6 +78,7 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
         self._normalized_expected_headers = {
             self._normalize_header_key(header): header for header in self._expected_headers
         }
+        self._api_service = self.api_service
 
     @property
     def worksheet_name(self) -> str:
@@ -75,32 +86,135 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
 
     @property
     def is_read_only(self) -> bool:
-        return True
+        return self.settings.read_only_public_fallback
 
     def list_rows(self, sheet_name: str) -> list[SheetRecord]:
         snapshot = self._load_snapshot(sheet_name)
         return [SheetRecord(row_number=row.row_number, values=dict(row.values)) for row in snapshot.rows]
 
     def append_row(self, sheet_name: str, values: RowData) -> SheetRecord:
-        raise GoogleSheetsReadOnlyError(self._read_only_message(sheet_name))
+        if self.is_read_only:
+            raise GoogleSheetsReadOnlyError(self._read_only_message(sheet_name))
+        snapshot = self._load_snapshot(sheet_name)
+        body = {"values": [self._row_to_ordered_values(values, snapshot.headers)]}
+        try:
+            self._spreadsheets_values().append(
+                spreadsheetId=self.settings.spreadsheet_id,
+                range=self._worksheet_range(snapshot.sheet_name),
+                valueInputOption="USER_ENTERED",
+                insertDataOption="INSERT_ROWS",
+                includeValuesInResponse=True,
+                body=body,
+            ).execute()
+        except HttpError as exc:
+            raise GoogleSheetsConnectivityError("Failed to append a row through the Google Sheets API.") from exc
+        return self._find_appended_row(snapshot.sheet_name, values.get("Asset_ID"))
 
     def update_row(self, sheet_name: str, row_number: int, values: RowData) -> SheetRecord:
-        raise GoogleSheetsReadOnlyError(self._read_only_message(sheet_name))
+        if self.is_read_only:
+            raise GoogleSheetsReadOnlyError(self._read_only_message(sheet_name))
+        snapshot = self._load_snapshot(sheet_name)
+        try:
+            self._spreadsheets_values().update(
+                spreadsheetId=self.settings.spreadsheet_id,
+                range=f"{snapshot.sheet_name}!{row_number}:{row_number}",
+                valueInputOption="USER_ENTERED",
+                body={"values": [self._row_to_ordered_values(values, snapshot.headers)]},
+            ).execute()
+        except HttpError as exc:
+            raise GoogleSheetsConnectivityError(
+                f"Failed to update row {row_number} through the Google Sheets API."
+            ) from exc
+        return SheetRecord(row_number=row_number, values=dict(values))
 
     def delete_row(self, sheet_name: str, row_number: int) -> None:
-        raise GoogleSheetsReadOnlyError(self._read_only_message(sheet_name))
+        if self.is_read_only:
+            raise GoogleSheetsReadOnlyError(self._read_only_message(sheet_name))
+        snapshot = self._load_snapshot(sheet_name)
+        if snapshot.sheet_id is None:
+            raise GoogleSheetsWorksheetError(
+                f"Worksheet {snapshot.sheet_name!r} is missing a Google Sheets sheetId required for row deletion."
+            )
+        try:
+            self._spreadsheets().batchUpdate(
+                spreadsheetId=self.settings.spreadsheet_id,
+                body={
+                    "requests": [
+                        {
+                            "deleteDimension": {
+                                "range": {
+                                    "sheetId": snapshot.sheet_id,
+                                    "dimension": "ROWS",
+                                    "startIndex": row_number - 1,
+                                    "endIndex": row_number,
+                                }
+                            }
+                        }
+                    ]
+                },
+            ).execute()
+        except HttpError as exc:
+            raise GoogleSheetsConnectivityError(
+                f"Failed to delete row {row_number} through the Google Sheets API."
+            ) from exc
 
     def validate_connection(self) -> WorksheetSnapshot:
-        return self._load_snapshot(self.worksheet_name)
+        snapshot = self._load_snapshot(self.worksheet_name)
+        LOGGER.info(
+            "Configured Google Sheets backend for spreadsheet %s worksheet %s in %s mode.",
+            self.settings.spreadsheet_id,
+            snapshot.sheet_name,
+            self.settings.runtime_mode_label,
+        )
+        return snapshot
 
     def _load_snapshot(self, sheet_name: str) -> WorksheetSnapshot:
         resolved_sheet_name = self._resolve_sheet_name(sheet_name)
-        raw_rows = self._fetch_public_rows(resolved_sheet_name)
+        if self.is_read_only:
+            raw_rows = self._fetch_public_rows(resolved_sheet_name)
+            return self._build_snapshot(sheet_name=resolved_sheet_name, sheet_id=None, raw_rows=raw_rows)
+
+        metadata = self._fetch_authenticated_sheet_metadata(resolved_sheet_name)
+        raw_rows = self._fetch_authenticated_rows(resolved_sheet_name)
         return self._build_snapshot(
             sheet_name=resolved_sheet_name,
-            sheet_id=None,
+            sheet_id=metadata["properties"]["sheetId"],
             raw_rows=raw_rows,
         )
+
+    def _fetch_authenticated_sheet_metadata(self, sheet_name: str) -> dict[str, Any]:
+        try:
+            response = self._spreadsheets().get(
+                spreadsheetId=self.settings.spreadsheet_id,
+                fields="sheets(properties(sheetId,title))",
+            ).execute()
+        except HttpError as exc:
+            raise GoogleSheetsConnectivityError("Failed to load spreadsheet metadata from the Google Sheets API.") from exc
+        for sheet in response.get("sheets", []):
+            properties = sheet.get("properties", {})
+            if properties.get("title") == sheet_name:
+                return sheet
+        raise GoogleSheetsWorksheetError(
+            f"Worksheet {sheet_name!r} was not found in the target spreadsheet."
+        )
+
+    def _fetch_authenticated_rows(self, sheet_name: str) -> list[list[Any]]:
+        try:
+            response = self._spreadsheets_values().get(
+                spreadsheetId=self.settings.spreadsheet_id,
+                range=self._worksheet_range(sheet_name),
+                majorDimension="ROWS",
+            ).execute()
+        except HttpError as exc:
+            raise GoogleSheetsConnectivityError(
+                f"Failed to read worksheet {sheet_name!r} through the Google Sheets API."
+            ) from exc
+        rows = [list(row) for row in response.get("values", [])]
+        if not rows:
+            raise GoogleSheetsWorksheetError(
+                f"Worksheet {sheet_name!r} returned no data from the Google Sheets API."
+            )
+        return rows
 
     def _fetch_public_rows(self, sheet_name: str) -> list[list[str]]:
         url = self._public_csv_url(sheet_name)
@@ -210,14 +324,48 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
             f"Only the canonical ASSETS worksheet is supported; received {requested_sheet_name!r}."
         )
 
+    def _row_to_ordered_values(self, values: RowData, headers: Sequence[str]) -> list[Any]:
+        return [self._serialize_outbound_value(values.get(header)) for header in headers]
+
+    def _find_appended_row(self, sheet_name: str, asset_id: Any) -> SheetRecord:
+        snapshot = self._load_snapshot(sheet_name)
+        if asset_id is None:
+            if not snapshot.rows:
+                raise GoogleSheetsWorksheetError("The appended row could not be confirmed after the write completed.")
+            return snapshot.rows[-1]
+        for record in reversed(snapshot.rows):
+            if record.values.get("Asset_ID") == asset_id:
+                return record
+        raise GoogleSheetsWorksheetError(
+            f"The appended row for Asset_ID {asset_id!r} could not be located after the write completed."
+        )
+
+    def _worksheet_range(self, sheet_name: str) -> str:
+        return f"'{sheet_name}'"
+
+    def _create_api_service(self) -> Any:
+        credentials = _load_service_account_credentials(self.settings)
+        return build("sheets", "v4", credentials=credentials, cache_discovery=False)
+
+    def _spreadsheets(self) -> Any:
+        return self._service().spreadsheets()
+
+    def _spreadsheets_values(self) -> Any:
+        return self._spreadsheets().values()
+
+    def _service(self) -> Any:
+        if self._api_service is None:
+            self._api_service = self._create_api_service()
+        return self._api_service
+
     def _public_csv_url(self, sheet_name: str) -> str:
         query = urlencode({"tqx": "out:csv", "sheet": sheet_name})
         return f"https://docs.google.com/spreadsheets/d/{self.settings.spreadsheet_id}/gviz/tq?{query}"
 
     def _read_only_message(self, sheet_name: str) -> str:
         return (
-            f"Worksheet {self._resolve_sheet_name(sheet_name)!r} is configured through the public Google Sheets export "
-            "endpoint, which is read-only. Authenticated Google API writes have been intentionally disabled."
+            f"Worksheet {self._resolve_sheet_name(sheet_name)!r} is configured in explicit public read-only mode. "
+            "Set service-account credentials to enable POST, PATCH, PUT, and DELETE operations."
         )
 
     @staticmethod
@@ -244,6 +392,34 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
             trimmed = value.strip()
             return trimmed or None
         return value
+
+    @staticmethod
+    def _serialize_outbound_value(value: Any) -> Any:
+        if value is None:
+            return ""
+        return value
+
+
+def _load_service_account_credentials(settings: GoogleSheetsSettings) -> Credentials:
+    if settings.service_account_file:
+        credential_path = Path(settings.service_account_file)
+        if not credential_path.exists():
+            raise GoogleSheetsConfigurationError(
+                f"Service account credentials file was not found: {credential_path}"
+            )
+        return Credentials.from_service_account_file(str(credential_path), scopes=[SHEETS_API_SCOPE])
+    if settings.service_account_json:
+        try:
+            info = json.loads(settings.service_account_json)
+        except json.JSONDecodeError as exc:
+            raise GoogleSheetsConfigurationError(
+                "VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON."
+            ) from exc
+        return Credentials.from_service_account_info(info, scopes=[SHEETS_API_SCOPE])
+    raise GoogleSheetsConfigurationError(
+        "Authenticated Google Sheets mode requires VIGILANCE_GOOGLE_SERVICE_ACCOUNT_FILE or "
+        "VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON."
+    )
 
 
 def build_google_sheets_gateway(settings: GoogleSheetsSettings, expected_headers: Sequence[str]) -> GoogleSheetsTableGateway:
