@@ -22,28 +22,74 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
             worksheet_name='Inventory Assets',
         )
 
-    def test_build_snapshot_requires_exact_canonical_headers(self) -> None:
+    def test_build_snapshot_requires_all_canonical_headers_in_detected_row(self) -> None:
         gateway = GoogleSheetsTableGateway(settings=self.settings, expected_headers=self.mapper.ordered_headers)
 
-        with self.assertRaisesRegex(GoogleSheetsWorksheetError, 'missing headers'):
+        with self.assertRaisesRegex(GoogleSheetsWorksheetError, 'missing canonical headers'):
             gateway._build_snapshot(
                 sheet_name='Inventory Assets',
                 sheet_id=None,
                 raw_rows=[
+                    ['CYBERSECURITY TOOL–SPECIFIC FIELDS'],
                     ['Asset_ID', 'Asset_Name', 'Asset_Category'],
                     ['AST-001', 'Threat Radar', 'Cybersecurity Tool'],
                 ],
             )
 
-    def test_build_snapshot_rejects_unexpected_headers(self) -> None:
+    def test_build_snapshot_ignores_decorative_row_and_blank_separator_columns(self) -> None:
         gateway = GoogleSheetsTableGateway(settings=self.settings, expected_headers=self.mapper.ordered_headers)
+        headers = list(self.mapper.ordered_headers)
+        tool_type_index = headers.index('Tool_Type')
+        service_type_index = headers.index('Service_Type')
+        row_length = len(headers) + 2
 
-        with self.assertRaisesRegex(GoogleSheetsWorksheetError, 'unexpected headers'):
-            gateway._build_snapshot(
-                sheet_name='Inventory Assets',
-                sheet_id=None,
-                raw_rows=[list(self.mapper.ordered_headers) + ['Extra_Column']],
-            )
+        decorative_row = [''] * row_length
+        decorative_row[tool_type_index] = ' CYBERSECURITY TOOL–SPECIFIC FIELDS (if Asset_Category = Cybersecurity Tool) '
+        decorative_row[service_type_index + 1] = 'PLATFORM / SERVICE—SPECIFIC FIELDS (if Asset_Category = Platform / Service)'
+
+        actual_header_row = headers[:tool_type_index] + ['  Tool_Type  ', ''] + headers[tool_type_index + 1:service_type_index] + [''] + headers[service_type_index:]
+        data_row = [''] * row_length
+        row_values = {
+            'Asset_ID': 'AST-001',
+            'Asset_Name': 'Threat Radar',
+            'Asset_Category': 'Cybersecurity Tool',
+            'Owner_Org': 'OpenAI Security Lab',
+            'Owner_Contact': 'alice@example.org',
+            'Pilot (s)': 'Pilot A',
+            'Purpose (1-2 sentences)': 'Aggregates threat findings for analysts.',
+            'Status': 'Active',
+            'TRL_Start': '4',
+            'TRL_Current': '5',
+            'TRL_Target': '7',
+            'Related_Result': 'RS3',
+            'Related_WP_Task': 'T5.3',
+            'Deployment_Context': 'Cloud',
+            'Standards_Compliance': 'IEC 62443',
+            'Security_Domain': 'Cloud Security',
+            'Documentation_Link': 'https://example.org/tool',
+            'Last_Updated': '2026-03-21',
+            'Updated_By': 'alice@example.org',
+            'Tool_Type': 'SIEM (Security Information and Event Management)',
+        }
+        normalized_columns = {
+            gateway._normalize_header_key(value): index
+            for index, value in enumerate(actual_header_row)
+            if gateway._normalize_header_key(value)
+        }
+        for header, value in row_values.items():
+            data_row[normalized_columns[gateway._normalize_header_key(header)]] = value
+
+        snapshot = gateway._build_snapshot(
+            sheet_name='Inventory Assets',
+            sheet_id=None,
+            raw_rows=[decorative_row, actual_header_row, data_row],
+        )
+
+        self.assertEqual(snapshot.headers, self.mapper.ordered_headers)
+        self.assertEqual(snapshot.rows[0].row_number, 3)
+        self.assertEqual(snapshot.rows[0].values['Asset_ID'], 'AST-001')
+        self.assertEqual(snapshot.rows[0].values['Tool_Type'], 'SIEM (Security Information and Event Management)')
+        self.assertNotIn('', snapshot.rows[0].values)
 
     def test_validate_connection_reads_public_csv_export(self) -> None:
         csv_payload = '\n'.join([
