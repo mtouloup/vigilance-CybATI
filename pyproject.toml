@@ -18,3 +18,6 @@ testpaths = ["tests"]
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+vigilance_assets = ["resources/*.json"]
