@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 import os
 
 from dotenv import load_dotenv
@@ -7,6 +8,7 @@ from dotenv import load_dotenv
 from vigilance_assets.runtime import create_runtime_app
 
 load_dotenv()
+logging.basicConfig(level=os.getenv("VIGILANCE_LOG_LEVEL", "INFO").upper())
 
 app = create_runtime_app()
 

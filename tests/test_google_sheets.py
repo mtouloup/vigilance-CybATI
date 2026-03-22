@@ -1,14 +1,16 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from urllib.error import HTTPError
 
 from vigilance_assets.config import GoogleSheetsSettings
 from vigilance_assets.google_sheets import (
+    GoogleSheetsConfigurationError,
     GoogleSheetsReadOnlyError,
     GoogleSheetsTableGateway,
     GoogleSheetsWorksheetError,
+    _load_service_account_credentials,
     build_google_sheets_gateway,
 )
 from vigilance_assets.spreadsheet import AssetSpreadsheetMapper
@@ -17,13 +19,19 @@ from vigilance_assets.spreadsheet import AssetSpreadsheetMapper
 class GoogleSheetsGatewayTests(unittest.TestCase):
     def setUp(self) -> None:
         self.mapper = AssetSpreadsheetMapper()
-        self.settings = GoogleSheetsSettings(
+        self.auth_settings = GoogleSheetsSettings(
             spreadsheet_id='sheet-123',
             worksheet_name='Inventory Assets',
+            service_account_json='{"type":"service_account","client_email":"svc@example.org","token_uri":"https://oauth2.googleapis.com/token","private_key_id":"key","private_key":"-----BEGIN PRIVATE KEY-----\\nabc\\n-----END PRIVATE KEY-----\\n"}',
+        )
+        self.public_settings = GoogleSheetsSettings(
+            spreadsheet_id='sheet-123',
+            worksheet_name='Inventory Assets',
+            read_only_public_fallback=True,
         )
 
     def test_build_snapshot_requires_all_canonical_headers_in_detected_row(self) -> None:
-        gateway = GoogleSheetsTableGateway(settings=self.settings, expected_headers=self.mapper.ordered_headers)
+        gateway = GoogleSheetsTableGateway(settings=self.auth_settings, expected_headers=self.mapper.ordered_headers)
 
         with self.assertRaisesRegex(GoogleSheetsWorksheetError, 'missing canonical headers'):
             gateway._build_snapshot(
@@ -37,7 +45,7 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
             )
 
     def test_build_snapshot_ignores_decorative_row_and_blank_separator_columns(self) -> None:
-        gateway = GoogleSheetsTableGateway(settings=self.settings, expected_headers=self.mapper.ordered_headers)
+        gateway = GoogleSheetsTableGateway(settings=self.auth_settings, expected_headers=self.mapper.ordered_headers)
         headers = list(self.mapper.ordered_headers)
         tool_type_index = headers.index('Tool_Type')
         service_type_index = headers.index('Service_Type')
@@ -91,7 +99,7 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
         self.assertEqual(snapshot.rows[0].values['Tool_Type'], 'SIEM (Security Information and Event Management)')
         self.assertNotIn('', snapshot.rows[0].values)
 
-    def test_validate_connection_reads_public_csv_export(self) -> None:
+    def test_validate_connection_reads_public_csv_export_when_explicitly_configured(self) -> None:
         csv_payload = '\n'.join([
             ','.join(self.mapper.ordered_headers),
             ','.join([
@@ -111,38 +119,91 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
                 return csv_payload.encode('utf-8')
 
         with patch('vigilance_assets.google_sheets.urlopen', return_value=FakeResponse()):
-            gateway = GoogleSheetsTableGateway(settings=self.settings, expected_headers=self.mapper.ordered_headers)
+            gateway = GoogleSheetsTableGateway(settings=self.public_settings, expected_headers=self.mapper.ordered_headers)
             snapshot = gateway.validate_connection()
 
         self.assertEqual(snapshot.sheet_name, 'Inventory Assets')
         self.assertIsNone(snapshot.sheet_id)
         self.assertEqual(snapshot.rows[0].values['Asset_ID'], 'AST-001')
         self.assertEqual(snapshot.rows[0].row_number, 2)
+        self.assertTrue(gateway.is_read_only)
+
+    def test_authenticated_gateway_reads_rows_via_google_api(self) -> None:
+        values_resource = Mock()
+        values_resource.get.return_value.execute.return_value = {
+            'values': [
+                list(self.mapper.ordered_headers),
+                ['AST-001', 'Threat Radar', 'Cybersecurity Tool'] + [''] * (len(self.mapper.ordered_headers) - 3),
+            ]
+        }
+        spreadsheets_resource = Mock()
+        spreadsheets_resource.get.return_value.execute.return_value = {
+            'sheets': [{'properties': {'sheetId': 12, 'title': 'Inventory Assets'}}]
+        }
+        spreadsheets_resource.values.return_value = values_resource
+        service = Mock()
+        service.spreadsheets.return_value = spreadsheets_resource
+
+        gateway = GoogleSheetsTableGateway(
+            settings=self.auth_settings,
+            expected_headers=self.mapper.ordered_headers,
+            api_service=service,
+        )
+
+        snapshot = gateway.validate_connection()
+
+        self.assertEqual(snapshot.sheet_id, 12)
+        self.assertEqual(snapshot.rows[0].values['Asset_ID'], 'AST-001')
+        self.assertFalse(gateway.is_read_only)
+
+    def test_authenticated_gateway_can_delete_rows(self) -> None:
+        gateway = GoogleSheetsTableGateway(
+            settings=self.auth_settings,
+            expected_headers=self.mapper.ordered_headers,
+            api_service=Mock(),
+        )
+        gateway._load_snapshot = Mock(return_value=type('Snapshot', (), {'sheet_name': 'Inventory Assets', 'sheet_id': 42, 'headers': self.mapper.ordered_headers})())
+        gateway._spreadsheets = Mock()
+        gateway._spreadsheets.return_value.batchUpdate.return_value.execute.return_value = {}
+
+        gateway.delete_row('Inventory Assets', 5)
+
+        body = gateway._spreadsheets.return_value.batchUpdate.call_args.kwargs['body']
+        delete_range = body['requests'][0]['deleteDimension']['range']
+        self.assertEqual(delete_range['sheetId'], 42)
+        self.assertEqual(delete_range['startIndex'], 4)
+        self.assertEqual(delete_range['endIndex'], 5)
 
     def test_build_google_sheets_gateway_validates_on_construction(self) -> None:
-        fake_gateway = GoogleSheetsTableGateway(settings=self.settings, expected_headers=self.mapper.ordered_headers)
+        fake_gateway = GoogleSheetsTableGateway(settings=self.public_settings, expected_headers=self.mapper.ordered_headers)
         with patch.object(fake_gateway, 'validate_connection', return_value=None) as validate_connection, patch(
             'vigilance_assets.google_sheets.GoogleSheetsTableGateway', return_value=fake_gateway
         ) as gateway_class:
-            gateway = build_google_sheets_gateway(self.settings, self.mapper.ordered_headers)
+            gateway = build_google_sheets_gateway(self.public_settings, self.mapper.ordered_headers)
 
         self.assertIs(gateway, fake_gateway)
         gateway_class.assert_called_once()
         validate_connection.assert_called_once_with()
 
     def test_public_sheet_writes_raise_read_only_error(self) -> None:
-        gateway = GoogleSheetsTableGateway(settings=self.settings, expected_headers=self.mapper.ordered_headers)
+        gateway = GoogleSheetsTableGateway(settings=self.public_settings, expected_headers=self.mapper.ordered_headers)
 
         with self.assertRaisesRegex(GoogleSheetsReadOnlyError, 'read-only'):
             gateway.append_row('Inventory Assets', {'Asset_ID': 'AST-001'})
 
     def test_missing_public_sheet_surfaces_clear_error(self) -> None:
-        gateway = GoogleSheetsTableGateway(settings=self.settings, expected_headers=self.mapper.ordered_headers)
+        gateway = GoogleSheetsTableGateway(settings=self.public_settings, expected_headers=self.mapper.ordered_headers)
         error = HTTPError('https://example.test', 404, 'Not Found', hdrs=None, fp=None)
 
         with patch('vigilance_assets.google_sheets.urlopen', side_effect=error):
             with self.assertRaisesRegex(GoogleSheetsWorksheetError, 'publicly accessible'):
                 gateway.validate_connection()
+
+    def test_service_account_json_must_be_valid_json(self) -> None:
+        with self.assertRaisesRegex(GoogleSheetsConfigurationError, 'not valid JSON'):
+            _load_service_account_credentials(
+                GoogleSheetsSettings(spreadsheet_id='sheet-123', service_account_json='not-json')
+            )
 
 
 if __name__ == '__main__':

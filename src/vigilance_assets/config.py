@@ -17,12 +17,30 @@ class ConfigurationError(ValueError):
 class GoogleSheetsSettings:
     spreadsheet_id: str
     worksheet_name: str = DEFAULT_ASSETS_WORKSHEET
+    service_account_file: str | None = None
+    service_account_json: str | None = None
+    read_only_public_fallback: bool = False
+
+    @property
+    def runtime_mode_label(self) -> str:
+        return "public-read-only" if self.read_only_public_fallback else "authenticated-read-write"
 
     def validate(self) -> None:
         if not self.spreadsheet_id:
             raise ConfigurationError("VIGILANCE_GOOGLE_SPREADSHEET_ID must be set.")
         if not self.worksheet_name:
             raise ConfigurationError("VIGILANCE_GOOGLE_WORKSHEET_NAME must be set.")
+        if self.read_only_public_fallback:
+            return
+        if self.service_account_file and self.service_account_json:
+            raise ConfigurationError(
+                "Set only one of VIGILANCE_GOOGLE_SERVICE_ACCOUNT_FILE or VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON."
+            )
+        if not self.service_account_file and not self.service_account_json:
+            raise ConfigurationError(
+                "Authenticated Google Sheets access requires VIGILANCE_GOOGLE_SERVICE_ACCOUNT_FILE or "
+                "VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON, unless VIGILANCE_GOOGLE_READ_ONLY_PUBLIC is enabled."
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +57,9 @@ def load_runtime_settings(env: Mapping[str, str] | None = None) -> AppRuntimeSet
         google_sheets=GoogleSheetsSettings(
             spreadsheet_id=_read_required_str(values, "GOOGLE_SPREADSHEET_ID"),
             worksheet_name=_read_str(values, "GOOGLE_WORKSHEET_NAME", default=DEFAULT_ASSETS_WORKSHEET),
+            service_account_file=_read_optional_str(values, "GOOGLE_SERVICE_ACCOUNT_FILE"),
+            service_account_json=_read_optional_str(values, "GOOGLE_SERVICE_ACCOUNT_JSON"),
+            read_only_public_fallback=_read_bool(values, "GOOGLE_READ_ONLY_PUBLIC", default=False),
         )
     )
     settings.validate()
@@ -66,3 +87,10 @@ def _read_required_str(env: Mapping[str, str], name: str) -> str:
 
 def _read_str(env: Mapping[str, str], name: str, *, default: str) -> str:
     return _read_optional_str(env, name) or default
+
+
+def _read_bool(env: Mapping[str, str], name: str, *, default: bool) -> bool:
+    value = _read_optional_str(env, name)
+    if value is None:
+        return default
+    return value.lower() in {"1", "true", "yes", "on"}
