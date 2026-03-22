@@ -114,6 +114,42 @@ The target workbook may contain multiple tabs, but this application only uses th
 - Header validation is strict: startup fails if required headers are missing, duplicated, or if unexpected headers are present.
 - Reads and writes are performed against the configured worksheet only.
 
+## Quick Start (Local Development)
+
+Create and activate a Python 3.11+ environment, then install the project:
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install --upgrade pip
+pip install -e .
+```
+
+Set the required environment variables directly, or place them in a local `.env` file in the repository root so `python app.py` loads them automatically:
+
+```bash
+VIGILANCE_GOOGLE_SPREADSHEET_ID=your_spreadsheet_id
+VIGILANCE_GOOGLE_CREDENTIALS_PATH=/absolute/path/to/service-account.json
+# optional
+VIGILANCE_GOOGLE_WORKSHEET_NAME=ASSETS
+VIGILANCE_PORT=8000
+VIGILANCE_DEBUG=true
+```
+
+Start the API locally:
+
+```bash
+python app.py
+```
+
+Open the service in your browser:
+
+- API root and endpoints: `http://localhost:8000/` and `http://localhost:8000/assets`
+- Swagger UI: `http://localhost:8000/docs`
+- OpenAPI document: `http://localhost:8000/openapi.json`
+
+If you use Visual Studio Code, the optional `.vscode/launch.json` lets you start the same entry point with the **Run** button while still loading `.env`.
+
 ## Running locally
 
 Create and activate a Python 3.11+ environment, then install the project:
@@ -134,7 +170,13 @@ export VIGILANCE_GOOGLE_CREDENTIALS_PATH=/absolute/path/to/service-account.json
 export VIGILANCE_GOOGLE_WORKSHEET_NAME=ASSETS
 ```
 
-Run the app:
+Run the app with the local entry point:
+
+```bash
+python app.py
+```
+
+Or, if you prefer the Flask CLI:
 
 ```bash
 flask --app vigilance_assets.wsgi run --debug --host 0.0.0.0 --port 8000
