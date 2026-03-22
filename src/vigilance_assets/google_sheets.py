@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import csv
 import io
+import re
+import unicodedata
 from dataclasses import dataclass
 from typing import Any, Sequence
 from urllib.error import HTTPError, URLError
@@ -36,6 +38,15 @@ class WorksheetSnapshot:
     rows: tuple[SheetRecord, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class HeaderSelection:
+    header_row_index: int
+    headers: tuple[str, ...]
+    canonical_headers: tuple[str, ...]
+    canonical_indexes: tuple[int, ...]
+    matched_count: int
+
+
 @dataclass(slots=True)
 class GoogleSheetsTableGateway(SpreadsheetTableGateway):
     """Public Google Sheets adapter for the canonical ASSETS worksheet.
@@ -49,10 +60,14 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
     settings: GoogleSheetsSettings
     expected_headers: Sequence[str] = ()
     timeout_seconds: float = 20.0
+    header_scan_limit: int = 10
 
     def __post_init__(self) -> None:
         self._expected_headers = tuple(self.expected_headers)
         self._expected_header_set = set(self._expected_headers)
+        self._normalized_expected_headers = {
+            self._normalize_header_key(header): header for header in self._expected_headers
+        }
 
     @property
     def worksheet_name(self) -> str:
@@ -117,41 +132,75 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
     def _build_snapshot(self, *, sheet_name: str, sheet_id: int | None, raw_rows: Sequence[Sequence[Any]]) -> WorksheetSnapshot:
         if not raw_rows:
             raise GoogleSheetsWorksheetError(
-                f"Worksheet {sheet_name!r} is empty; the first row must contain the canonical ASSETS headers."
+                f"Worksheet {sheet_name!r} is empty; the worksheet must contain the canonical ASSETS headers."
             )
-        headers = tuple(self._normalize_header(value) for value in raw_rows[0])
-        self._validate_headers(sheet_name, headers)
-        cleaned_headers = tuple(header for header in headers if header)
+        selection = self._select_header_row(sheet_name, raw_rows)
         records: list[SheetRecord] = []
-        for row_number, row in enumerate(raw_rows[1:], start=2):
+        for row_number, row in enumerate(raw_rows[selection.header_row_index + 1 :], start=selection.header_row_index + 2):
             values = {
-                header: self._normalize_inbound_value(row[index] if index < len(row) else None)
-                for index, header in enumerate(cleaned_headers)
+                canonical_header: self._normalize_inbound_value(row[column_index] if column_index < len(row) else None)
+                for canonical_header, column_index in zip(selection.canonical_headers, selection.canonical_indexes)
             }
             if not any(value not in (None, "") for value in values.values()):
                 continue
             records.append(SheetRecord(row_number=row_number, values=values))
-        return WorksheetSnapshot(sheet_name=sheet_name, sheet_id=sheet_id, headers=cleaned_headers, rows=tuple(records))
+        return WorksheetSnapshot(
+            sheet_name=sheet_name,
+            sheet_id=sheet_id,
+            headers=selection.canonical_headers,
+            rows=tuple(records),
+        )
 
-    def _validate_headers(self, sheet_name: str, headers: Sequence[str]) -> None:
-        cleaned = [header for header in headers if header]
-        if not cleaned:
-            raise GoogleSheetsWorksheetError(f"Worksheet {sheet_name!r} does not contain any non-empty headers.")
-        duplicates = sorted({header for header in cleaned if cleaned.count(header) > 1})
+    def _select_header_row(self, sheet_name: str, raw_rows: Sequence[Sequence[Any]]) -> HeaderSelection:
+        best_selection: HeaderSelection | None = None
+        scan_limit = min(len(raw_rows), self.header_scan_limit)
+        for row_index in range(scan_limit):
+            selection = self._evaluate_header_row(row_index, raw_rows[row_index])
+            if selection is None:
+                continue
+            if best_selection is None or selection.matched_count > best_selection.matched_count:
+                best_selection = selection
+        if best_selection is None:
+            raise GoogleSheetsWorksheetError(
+                f"Worksheet {sheet_name!r} does not contain a recognizable canonical ASSETS header row within the first {scan_limit} rows."
+            )
+        self._validate_detected_headers(sheet_name, best_selection)
+        return best_selection
+
+    def _evaluate_header_row(self, row_index: int, row: Sequence[Any]) -> HeaderSelection | None:
+        canonical_headers: list[str] = []
+        canonical_indexes: list[int] = []
+        seen_headers: set[str] = set()
+        for column_index, value in enumerate(row):
+            normalized_key = self._normalize_header_key(value)
+            if not normalized_key:
+                continue
+            canonical_header = self._normalized_expected_headers.get(normalized_key)
+            if canonical_header is None or canonical_header in seen_headers:
+                continue
+            seen_headers.add(canonical_header)
+            canonical_headers.append(canonical_header)
+            canonical_indexes.append(column_index)
+        if not canonical_headers:
+            return None
+        return HeaderSelection(
+            header_row_index=row_index,
+            headers=tuple(self._normalize_header(value) for value in row),
+            canonical_headers=tuple(canonical_headers),
+            canonical_indexes=tuple(canonical_indexes),
+            matched_count=len(canonical_headers),
+        )
+
+    def _validate_detected_headers(self, sheet_name: str, selection: HeaderSelection) -> None:
+        duplicates = sorted({header for header in selection.canonical_headers if selection.canonical_headers.count(header) > 1})
         if duplicates:
             raise GoogleSheetsWorksheetError(
-                f"Worksheet {sheet_name!r} contains duplicate headers: {', '.join(duplicates)}."
+                f"Worksheet {sheet_name!r} header row {selection.header_row_index + 1} contains duplicate canonical headers: {', '.join(duplicates)}."
             )
-        missing = sorted(self._expected_header_set.difference(cleaned))
-        extra = sorted(set(cleaned).difference(self._expected_header_set))
-        if missing or extra:
-            details: list[str] = []
-            if missing:
-                details.append(f"missing headers: {', '.join(missing)}")
-            if extra:
-                details.append(f"unexpected headers: {', '.join(extra)}")
+        missing = sorted(self._expected_header_set.difference(selection.canonical_headers))
+        if missing:
             raise GoogleSheetsWorksheetError(
-                f"Worksheet {sheet_name!r} headers do not match the canonical schema ({'; '.join(details)})."
+                f"Worksheet {sheet_name!r} header row {selection.header_row_index + 1} is missing canonical headers: {', '.join(missing)}."
             )
 
     def _resolve_sheet_name(self, requested_sheet_name: str) -> str:
@@ -176,6 +225,16 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
         if value is None:
             return ""
         return str(value).strip()
+
+    @classmethod
+    def _normalize_header_key(cls, value: Any) -> str:
+        header = cls._normalize_header(value)
+        if not header:
+            return ""
+        normalized = unicodedata.normalize("NFKC", header)
+        normalized = normalized.replace("–", "-").replace("—", "-").replace("−", "-")
+        normalized = re.sub(r"\s+", " ", normalized)
+        return normalized.casefold()
 
     @staticmethod
     def _normalize_inbound_value(value: Any) -> Any:
