@@ -15,6 +15,7 @@ from vigilance_assets import (
     InventoryPayload,
     UnsupportedCategoryError,
     UnsupportedVocabularyError,
+    ReadOnlyRepositoryError,
     build_asset_record,
     create_app,
 )
@@ -157,6 +158,22 @@ class ApiTests(unittest.TestCase):
         payload = response.get_json()
         self.assertEqual(payload["data"]["Asset_ID"], "AST-099")
         self.assertEqual(payload["data"]["Updated_By"], "api-user@example.org")
+
+    def test_post_assets_returns_read_only_error_when_backend_disables_mutations(self) -> None:
+        repository = ApiRepository()
+
+        def raise_read_only(asset):
+            raise ReadOnlyRepositoryError('Public sheet backend is read-only.')
+
+        repository.create_asset = raise_read_only
+        service = AssetService(repository, AssetValidator(repository.catalog), now_provider=now_utc)
+        client = create_app(service).test_client()
+
+        response = client.post('/assets', json=asset_payload('Platform / Service', asset_id='AST-099'))
+
+        self.assertEqual(response.status_code, 405)
+        payload = response.get_json()
+        self.assertEqual(payload['error']['code'], 'read_only_backend')
 
     def test_patch_assets_returns_machine_readable_validation_errors(self) -> None:
         response = self.client.patch("/assets/AST-001", json={"Asset_ID": "AST-999"})

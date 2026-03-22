@@ -12,6 +12,7 @@ def create_repository_from_settings(settings: AppRuntimeSettings) -> Spreadsheet
     return SpreadsheetAssetRepository(
         workbook_reference=settings.google_sheets.spreadsheet_id,
         gateway=gateway,
+        read_only=True,
     )
 
 

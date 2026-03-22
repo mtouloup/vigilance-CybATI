@@ -13,6 +13,7 @@ from .repository import (
     RepositoryError,
     UnsupportedCategoryError,
     UnsupportedVocabularyError,
+    ReadOnlyRepositoryError,
 )
 from .service import AssetService
 from .validation import ValidationError
@@ -62,6 +63,10 @@ def create_app(service: AssetService | None = None, *, repository: AssetReposito
     @app.errorhandler(ValueError)
     def handle_bad_request(error: ValueError) -> Any:
         return error_response(status=400, code='invalid_request', message=str(error))
+
+    @app.errorhandler(ReadOnlyRepositoryError)
+    def handle_read_only_repository(error: ReadOnlyRepositoryError) -> Any:
+        return error_response(status=405, code='read_only_backend', message=str(error))
 
     @app.errorhandler(RepositoryError)
     def handle_repository_error(error: RepositoryError) -> Any:
