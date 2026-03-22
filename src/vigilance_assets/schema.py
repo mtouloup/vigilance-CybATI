@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass, field
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -100,11 +101,13 @@ def _field_from_json(payload: dict[str, Any]) -> FieldDefinition:
 
 def load_schema_catalog(schema_path: str | Path | None = None) -> AssetSchemaCatalog:
     if schema_path is None:
-        schema_path = Path(__file__).resolve().parents[2] / "schema" / "assets_schema.json"
+        raw = json.loads(
+            resources.files("vigilance_assets")
+            .joinpath("resources", "assets_schema.json")
+            .read_text(encoding="utf-8")
+        )
     else:
-        schema_path = Path(schema_path)
-
-    raw = json.loads(schema_path.read_text(encoding="utf-8"))
+        raw = json.loads(Path(schema_path).read_text(encoding="utf-8"))
     rules = raw["validation_rules"]
 
     return AssetSchemaCatalog(
