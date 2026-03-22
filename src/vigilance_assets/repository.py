@@ -87,6 +87,10 @@ class UnsupportedCategoryError(RepositoryError):
     """Raised when a requested asset category does not exist in the schema."""
 
 
+class ReadOnlyRepositoryError(RepositoryError):
+    """Raised when a mutating operation is attempted against a read-only backend."""
+
+
 class AssetRepository(ABC):
     """Abstract storage interface for the asset inventory domain.
 
@@ -176,10 +180,13 @@ class SpreadsheetAssetRepository(AssetRepository):
         workbook_reference: str,
         gateway: SpreadsheetTableGateway | None = None,
         catalog: AssetSchemaCatalog | None = None,
+        *,
+        read_only: bool = False,
     ) -> None:
         super().__init__(catalog=catalog)
         self.workbook_reference = workbook_reference
         self.gateway = gateway
+        self.read_only = read_only
         from .spreadsheet import AssetSpreadsheetMapper
 
         self.mapper = AssetSpreadsheetMapper(self.catalog)
@@ -201,18 +208,21 @@ class SpreadsheetAssetRepository(AssetRepository):
         return self._find_asset_row(asset_id)[1]
 
     def create_asset(self, asset: AssetRecord) -> AssetRecord:
+        self._ensure_writable()
         if self.get_asset(asset.asset_id) is not None:
             raise DuplicateAssetError(asset.asset_id)
         record = self._require_gateway().append_row(self.mapper.sheet_name, self.mapper.asset_to_row(asset))
         return self.mapper.row_to_asset(record.values)
 
     def update_asset(self, asset_id: str, asset: AssetRecord) -> AssetRecord:
+        self._ensure_writable()
         gateway = self._require_gateway()
         row_number, _ = self._find_asset_row_or_raise(asset_id)
         record = gateway.update_row(self.mapper.sheet_name, row_number, self.mapper.asset_to_row(asset))
         return self.mapper.row_to_asset(record.values)
 
     def delete_asset(self, asset_id: str, *, mode: DeleteMode = "archive") -> None:
+        self._ensure_writable()
         gateway = self._require_gateway()
         row_number, existing_asset = self._find_asset_row_or_raise(asset_id)
         if mode == "delete":
@@ -246,6 +256,14 @@ class SpreadsheetAssetRepository(AssetRepository):
         if row_number is None or asset is None:
             raise AssetNotFoundError(asset_id)
         return row_number, asset
+
+
+    def _ensure_writable(self) -> None:
+        if self.read_only:
+            raise ReadOnlyRepositoryError(
+                "This deployment uses a publicly accessible Google Sheet through an unauthenticated export endpoint, "
+                "so asset mutations are disabled. Only read operations are supported."
+            )
 
     def _require_gateway(self) -> SpreadsheetTableGateway:
         if self.gateway is None:

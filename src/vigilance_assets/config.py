@@ -17,19 +17,12 @@ class ConfigurationError(ValueError):
 class GoogleSheetsSettings:
     spreadsheet_id: str
     worksheet_name: str = DEFAULT_ASSETS_WORKSHEET
-    credentials_path: str | None = None
-    credentials_json: str | None = None
 
     def validate(self) -> None:
         if not self.spreadsheet_id:
             raise ConfigurationError("VIGILANCE_GOOGLE_SPREADSHEET_ID must be set.")
         if not self.worksheet_name:
             raise ConfigurationError("VIGILANCE_GOOGLE_WORKSHEET_NAME must be set.")
-        if not self.credentials_path and not self.credentials_json:
-            raise ConfigurationError(
-                "Provide Google service account credentials via "
-                "VIGILANCE_GOOGLE_CREDENTIALS_PATH or VIGILANCE_GOOGLE_CREDENTIALS_JSON."
-            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -46,8 +39,6 @@ def load_runtime_settings(env: Mapping[str, str] | None = None) -> AppRuntimeSet
         google_sheets=GoogleSheetsSettings(
             spreadsheet_id=_read_required_str(values, "GOOGLE_SPREADSHEET_ID"),
             worksheet_name=_read_str(values, "GOOGLE_WORKSHEET_NAME", default=DEFAULT_ASSETS_WORKSHEET),
-            credentials_path=_read_optional_str(values, "GOOGLE_CREDENTIALS_PATH"),
-            credentials_json=_read_optional_str(values, "GOOGLE_CREDENTIALS_JSON"),
         )
     )
     settings.validate()

@@ -2,157 +2,74 @@
 
 VIGILANCE T2.3 Cybersecurity Asset & Technology Inventory service.
 
-This repository implements a Flask API over the canonical VIGILANCE asset schema defined in `docs/assets-schema.md` and `schema/assets_schema.json`. The application now supports **Google Sheets only** as its persistence backend. At runtime it connects to a single Google spreadsheet, reads and writes the canonical `ASSETS` worksheet by header name, and exposes CRUD, schema, vocabulary, and quality-report endpoints for the asset inventory.
+This Flask backend exposes the canonical inventory API defined by `docs/assets-schema.md` and `schema/assets_schema.json`, using a **public Google Sheet** as the storage backend. The application explicitly targets the `ASSETS` worksheet inside a workbook that may contain multiple tabs.
+
+## Public Google Sheet behavior
+
+The backend now uses Google Sheets' **unauthenticated public CSV export** mechanism for the configured worksheet. That means:
+
+- no Google credentials are required
+- no service account is required
+- no OAuth flow is required
+- no credential JSON or credential file path is supported
+- the sheet must already be publicly accessible or published by design
+
+Because this access path is public and unauthenticated, **read operations work, but write operations do not**. The API therefore runs in a deliberate **read-only mode** when backed by a public sheet. Mutating endpoints return a clear error instead of pretending to write.
 
 ## Canonical model
 
-The repository-level source of truth for the asset model is:
+The canonical asset model lives in:
 
 - `docs/assets-schema.md`
 - `schema/assets_schema.json`
 
-Important rules carried through the implementation:
+Important implementation rules:
 
 - one row in the `ASSETS` worksheet represents exactly one asset
 - `Asset_ID` is the stable unique API identifier
-- common fields apply to every asset
-- category-specific fields apply only to the chosen `Asset_Category`
-- the API validates controlled vocabularies, TRL ranges, URLs, timestamps, and category exclusivity
-- spreadsheet columns are always mapped by **header name**, never by hardcoded column index
-
-## Architecture
-
-The app remains layered, but it is simplified for a single backend:
-
-```text
-Flask blueprints
-      |
-      v
- AssetService
-      |
-      v
-SpreadsheetAssetRepository
-      |
-      v
-GoogleSheetsTableGateway
-      |
-      v
-Google Sheets API (ASSETS worksheet only)
-```
-
-### What changed in this migration
-
-- Google Sheets is the **only supported backend**.
-- Runtime configuration no longer supports local workbook files, in-memory storage, or backend switching.
-- Startup now validates:
-  - spreadsheet ID presence
-  - credentials presence and loadability
-  - target worksheet existence
-  - exact header compatibility with the canonical schema
-- The app is organized with Flask blueprints and browser-accessible Swagger UI.
+- spreadsheet columns are mapped by header name
+- the app validates records against the canonical schema
+- only the configured `ASSETS` worksheet is used for inventory data
 
 ## Environment variables
 
-The service reads configuration from environment variables with the `VIGILANCE_` prefix.
+The service reads runtime configuration from environment variables prefixed with `VIGILANCE_`.
 
 ### Required
 
 - `VIGILANCE_GOOGLE_SPREADSHEET_ID`
-  - The Google spreadsheet ID.
-- One of:
-  - `VIGILANCE_GOOGLE_CREDENTIALS_PATH`
-  - `VIGILANCE_GOOGLE_CREDENTIALS_JSON`
+  - the Google Spreadsheet ID for the public workbook
 
 ### Optional
 
 - `VIGILANCE_GOOGLE_WORKSHEET_NAME`
-  - Defaults to `ASSETS`.
-  - Use this only if the workbook uses a different tab name for the asset inventory while still representing the canonical ASSETS table.
+  - defaults to `ASSETS`
+  - use this only if the asset worksheet tab has a different public tab name
+- `VIGILANCE_PORT`
+  - default local port override
 - `PORT`
-  - Default container/runtime port is `8000`.
+  - default container/runtime port override
+- `VIGILANCE_DEBUG` or `FLASK_DEBUG`
+  - enable Flask debug mode locally
 - `GUNICORN_WORKERS`
-  - Default `2` in Docker.
+  - default `2` in Docker
 - `GUNICORN_THREADS`
-  - Default `4` in Docker.
-
-## Google credentials
-
-The expected authentication model is a standard Google service account with access to the target spreadsheet.
-
-### Option 1: credentials file path
-
-Set:
-
-```bash
-export VIGILANCE_GOOGLE_CREDENTIALS_PATH=/absolute/path/to/service-account.json
-```
-
-### Option 2: credentials JSON directly
-
-Set:
-
-```bash
-export VIGILANCE_GOOGLE_CREDENTIALS_JSON='{"type":"service_account",...}'
-```
-
-### Required Google setup
-
-1. Create or choose a Google Cloud project.
-2. Enable the Google Sheets API.
-3. Create a service account.
-4. Download the service account JSON key, or inject it securely as environment JSON.
-5. Share the target spreadsheet with the service account email.
-
-Do **not** hardcode credentials or commit secrets into the repository.
+  - default `4` in Docker
 
 ## Spreadsheet expectations
 
-The target workbook may contain multiple tabs, but this application only uses the asset inventory worksheet.
+The configured workbook may contain multiple sheets, but this application reads only the worksheet configured by `VIGILANCE_GOOGLE_WORKSHEET_NAME`, which defaults to `ASSETS`.
 
-- The runtime worksheet name defaults to `ASSETS`.
-- The first row of that worksheet must contain the canonical headers defined by `schema/assets_schema.json`.
-- Header validation is strict: startup fails if required headers are missing, duplicated, or if unexpected headers are present.
-- Reads and writes are performed against the configured worksheet only.
+Startup validates that:
 
-## Quick Start (Local Development)
+- a spreadsheet ID is configured
+- the target worksheet can be fetched through the public Google Sheets export endpoint
+- the first row contains the canonical headers from `schema/assets_schema.json`
+- there are no duplicate or unexpected headers
 
-Create and activate a Python 3.11+ environment, then install the project:
+## Run locally with `python app.py`
 
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install --upgrade pip
-pip install -e .
-```
-
-Set the required environment variables directly, or place them in a local `.env` file in the repository root so `python app.py` loads them automatically:
-
-```bash
-VIGILANCE_GOOGLE_SPREADSHEET_ID=your_spreadsheet_id
-VIGILANCE_GOOGLE_CREDENTIALS_PATH=/absolute/path/to/service-account.json
-# optional
-VIGILANCE_GOOGLE_WORKSHEET_NAME=ASSETS
-VIGILANCE_PORT=8000
-VIGILANCE_DEBUG=true
-```
-
-Start the API locally:
-
-```bash
-python app.py
-```
-
-Open the service in your browser:
-
-- API root and endpoints: `http://localhost:8000/` and `http://localhost:8000/assets`
-- Swagger UI: `http://localhost:8000/docs`
-- OpenAPI document: `http://localhost:8000/openapi.json`
-
-If you use Visual Studio Code, the optional `.vscode/launch.json` lets you start the same entry point with the **Run** button while still loading `.env`.
-
-## Running locally
-
-Create and activate a Python 3.11+ environment, then install the project:
+Create and activate a Python 3.11+ virtual environment, then install dependencies:
 
 ```bash
 python -m venv .venv
@@ -161,34 +78,29 @@ pip install --upgrade pip
 pip install -e .
 ```
 
-Set environment variables:
+Set environment variables directly or place them in a local `.env` file:
 
 ```bash
-export VIGILANCE_GOOGLE_SPREADSHEET_ID=your_spreadsheet_id
-export VIGILANCE_GOOGLE_CREDENTIALS_PATH=/absolute/path/to/service-account.json
-# optional
+export VIGILANCE_GOOGLE_SPREADSHEET_ID=your_public_spreadsheet_id
 export VIGILANCE_GOOGLE_WORKSHEET_NAME=ASSETS
+export VIGILANCE_PORT=8000
+export VIGILANCE_DEBUG=true
 ```
 
-Run the app with the local entry point:
+Start the app:
 
 ```bash
 python app.py
 ```
 
-Or, if you prefer the Flask CLI:
+Then open:
 
-```bash
-flask --app vigilance_assets.wsgi run --debug --host 0.0.0.0 --port 8000
-```
+- API root: `http://localhost:8000/`
+- assets endpoint: `http://localhost:8000/assets`
+- Swagger UI: `http://localhost:8000/docs`
+- OpenAPI JSON: `http://localhost:8000/openapi.json`
 
-Or with Gunicorn:
-
-```bash
-gunicorn --bind 0.0.0.0:8000 vigilance_assets.wsgi:app
-```
-
-## Running with Docker
+## Run with Docker
 
 Build the image:
 
@@ -196,84 +108,52 @@ Build the image:
 docker build -t vigilance-assets .
 ```
 
-### Using a mounted credentials file
+Run the container:
 
 ```bash
 docker run --rm -p 8000:8000 \
-  -e VIGILANCE_GOOGLE_SPREADSHEET_ID=your_spreadsheet_id \
+  -e VIGILANCE_GOOGLE_SPREADSHEET_ID=your_public_spreadsheet_id \
   -e VIGILANCE_GOOGLE_WORKSHEET_NAME=ASSETS \
-  -e VIGILANCE_GOOGLE_CREDENTIALS_PATH=/run/secrets/google-service-account.json \
-  -v /absolute/path/to/service-account.json:/run/secrets/google-service-account.json:ro \
   vigilance-assets
 ```
 
-### Using credentials JSON directly
+Or with Compose:
 
 ```bash
-docker run --rm -p 8000:8000 \
-  -e VIGILANCE_GOOGLE_SPREADSHEET_ID=your_spreadsheet_id \
-  -e VIGILANCE_GOOGLE_CREDENTIALS_JSON='{"type":"service_account",...}' \
-  vigilance-assets
+docker compose up --build
 ```
 
-## Swagger / OpenAPI
+## Swagger UI
 
-When the service starts successfully, OpenAPI documentation is available at:
+Swagger UI is served by the app at:
 
-- Swagger UI: `http://localhost:8000/docs`
-- OpenAPI JSON: `http://localhost:8000/openapi.json`
+- `http://localhost:8000/docs`
 
-The Swagger UI is served by the Flask app and works locally and inside Docker.
+The OpenAPI document is available at:
 
-## API endpoints
+- `http://localhost:8000/openapi.json`
 
-### Assets
+## API surface
+
+Read endpoints remain fully available:
 
 - `GET /assets`
 - `GET /assets/<asset_id>`
 - `GET /assets/quality`
+- `GET /vocabularies`
+- `GET /vocabularies/<name>`
+- `GET /schema/assets`
+- `GET /schema/assets/<category>`
+
+Mutation endpoints are still present for API compatibility, but public-sheet deployments return a clear read-only error:
+
 - `POST /assets`
 - `PATCH /assets/<asset_id>`
 - `PUT /assets/<asset_id>`
 - `DELETE /assets/<asset_id>`
 
-### Vocabularies
+## Public-sheet write limitation
 
-- `GET /vocabularies`
-- `GET /vocabularies/<name>`
+Google's public export mechanisms provide anonymous reads, not authenticated edits. Within this repository's current spreadsheet-backed design, there is **no legitimate unauthenticated way** to perform safe writes back to a public Google Sheet.
 
-### Schema
-
-- `GET /schema/assets`
-- `GET /schema/assets/<category>`
-
-## Filtering, sorting, pagination, and search
-
-`GET /assets` supports:
-
-- filtering on schema-defined filterable fields such as `Asset_Category`, `Owner_Org`, `Status`, `Pilot_s`, `Deployment_Context`, `Security_Domain`, and `Related_WP_Task`
-- pagination via `page` and `page_size`
-- sorting via `sort`
-- free-text search via `search`
-
-Example:
-
-```bash
-curl 'http://localhost:8000/assets?Asset_Category=Cybersecurity%20Tool&Status=Active&sort=Asset_Name&page=1&page_size=20'
-```
-
-## Startup failure behavior
-
-The application intentionally fails fast during startup when runtime configuration is invalid. Typical startup errors include:
-
-- missing `VIGILANCE_GOOGLE_SPREADSHEET_ID`
-- missing credentials configuration
-- invalid or unreadable service account credentials
-- configured worksheet not found in the spreadsheet
-- worksheet headers not matching the canonical schema
-
-This is deliberate so misconfiguration is caught immediately in local runs, container runs, and deployments.
-
-## Development notes
-
-The code keeps domain models, validation, service orchestration, transport, and persistence concerns separate, but the runtime backend path is now intentionally single-purpose and Google-Sheets-only.
+Accordingly, this backend intentionally does **not** fake write support. It keeps reads working against the public `ASSETS` worksheet and returns explicit read-only errors for mutations.
