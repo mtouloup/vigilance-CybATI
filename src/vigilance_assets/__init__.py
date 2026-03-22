@@ -1,18 +1,7 @@
-"""Domain models and validators for the VIGILANCE asset inventory service."""
+"""VIGILANCE asset inventory service package."""
 
 from .api import create_app
-from .config import (
-    FILE_BACKEND,
-    GOOGLE_SHEETS_BACKEND,
-    MEMORY_BACKEND,
-    AppRuntimeSettings,
-    ConfigurationError,
-    FileBackendSettings,
-    GoogleSheetsSettings,
-    SheetNames,
-    SpreadsheetBackendSettings,
-    load_runtime_settings,
-)
+from .config import AppRuntimeSettings, ConfigurationError, DEFAULT_ASSETS_WORKSHEET, GoogleSheetsSettings, load_runtime_settings
 from .google_sheets import (
     GoogleSheetsConfigurationError,
     GoogleSheetsConnectivityError,
@@ -45,21 +34,10 @@ from .repository import (
     UnsupportedCategoryError,
     UnsupportedVocabularyError,
 )
-from .runtime import (
-    InMemorySpreadsheetGateway,
-    WorkbookFileGateway,
-    create_repository_from_settings,
-    create_runtime_app,
-)
+from .runtime import create_repository_from_settings, create_runtime_app
 from .schema import AssetSchemaCatalog, load_schema_catalog
 from .service import AssetService
-from .spreadsheet import (
-    ASSETS_SHEET_NAME,
-    AssetSpreadsheetMapper,
-    SheetRecord,
-    SpreadsheetBackendError,
-    SpreadsheetTableGateway,
-)
+from .spreadsheet import ASSETS_SHEET_NAME, AssetSpreadsheetMapper, SheetRecord, SpreadsheetBackendError, SpreadsheetTableGateway
 from .validation import (
     AssetValidationSummary,
     AssetValidator,
@@ -71,6 +49,7 @@ from .validation import (
 
 __all__ = [
     "ASSETS_SHEET_NAME",
+    "AppRuntimeSettings",
     "AssetListQuery",
     "AssetNotFoundError",
     "AssetPage",
@@ -88,36 +67,28 @@ __all__ = [
     "ComputeResourceFields",
     "ConfigurationError",
     "CybersecurityToolFields",
+    "DEFAULT_ASSETS_WORKSHEET",
     "DataStoreFields",
     "DataStreamFields",
     "DuplicateAssetError",
-    "FILE_BACKEND",
-    "FileBackendSettings",
-    "GOOGLE_SHEETS_BACKEND",
     "GoogleSheetsConfigurationError",
     "GoogleSheetsConnectivityError",
     "GoogleSheetsSettings",
     "GoogleSheetsTableGateway",
     "GoogleSheetsWorksheetError",
-    "InMemorySpreadsheetGateway",
     "InventoryPayload",
     "InventoryValidationIssue",
     "InventoryValidationReport",
-    "MEMORY_BACKEND",
     "PhysicalAssetFields",
     "PlatformServiceFields",
-    "SheetNames",
     "SheetRecord",
     "SpreadsheetAssetRepository",
     "SpreadsheetBackendError",
-    "SpreadsheetBackendSettings",
     "SpreadsheetTableGateway",
     "UnsupportedCategoryError",
     "UnsupportedVocabularyError",
     "ValidationError",
     "ValidationIssue",
-    "WorkbookFileGateway",
-    "AppRuntimeSettings",
     "build_asset_record",
     "build_spreadsheet_repository",
     "create_app",

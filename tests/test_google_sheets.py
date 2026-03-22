@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 
+from vigilance_assets.config import GoogleSheetsSettings
 from vigilance_assets.google_sheets import (
     GoogleSheetsConfigurationError,
     GoogleSheetsTableGateway,
@@ -10,21 +11,6 @@ from vigilance_assets.google_sheets import (
     build_google_sheets_gateway,
 )
 from vigilance_assets.spreadsheet import AssetSpreadsheetMapper
-from vigilance_assets.config import GoogleSheetsSettings, SheetNames, SpreadsheetBackendSettings
-
-
-class _Response:
-    def __init__(self, payload: str) -> None:
-        self.payload = payload.encode('utf-8')
-
-    def read(self) -> bytes:
-        return self.payload
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, exc_type, exc, tb) -> None:
-        return None
 
 
 class GoogleSheetsGatewayTests(unittest.TestCase):
@@ -32,122 +18,87 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
         self.mapper = AssetSpreadsheetMapper()
         self.settings = GoogleSheetsSettings(
             spreadsheet_id='sheet-123',
-            mode='read_only',
-        )
-        self.gateway = GoogleSheetsTableGateway(
-            settings=self.settings,
-            sheet_names=SheetNames(assets='Inventory Assets'),
-            expected_headers=self.mapper.ordered_headers,
+            worksheet_name='Inventory Assets',
+            credentials_json='{"type": "service_account"}',
         )
 
-    def test_list_rows_reads_public_gviz_data_and_uses_configured_sheet_name(self) -> None:
-        import vigilance_assets.google_sheets as module
+    def test_build_snapshot_requires_exact_canonical_headers(self) -> None:
+        gateway = object.__new__(GoogleSheetsTableGateway)
+        gateway.settings = self.settings
+        gateway.expected_headers = self.mapper.ordered_headers
+        gateway._expected_headers = tuple(self.mapper.ordered_headers)
+        gateway._expected_header_set = set(self.mapper.ordered_headers)
 
-        payload = (
-            'google.visualization.Query.setResponse('
-            '{"status":"ok","table":{"rows":['
-            '{"c":[null,null,null]},'
-            '{"c":['
-            + ','.join('{"v":"%s"}' % header.replace('"', '\\"') for header in self.mapper.ordered_headers)
-            + ']},'
-            '{"c":['
-            '{"v":"AST-001"},'
-            '{"v":"Threat Radar"},'
-            '{"v":"Cybersecurity Tool"},'
-            '{"v":"OpenAI Security Lab"},'
-            '{"v":"alice@example.org"},'
-            '{"v":"Pilot A"},'
-            '{"v":"Aggregates threat findings for analysts."},'
-            '{"v":"Active"},'
-            '{"v":"4"},'
-            '{"v":"5"},'
-            '{"v":"7"},'
-            '{"v":"RS3"},'
-            '{"v":"T5.3"},'
-            '{"v":"Cloud"},'
-            '{"v":"IEC 62443"},'
-            '{"v":"Cloud Security"},'
-            '{"v":"https://example.org/tool"},'
-            '{"v":"2026-03-21"},'
-            '{"v":"alice@example.org"},'
-            '{"v":"SIEM (Security Information and Event Management)"}'
-            + ',null' * (len(self.mapper.ordered_headers) - 20)
-            + ']}'
-            ']}});'
-        )
-        seen_urls: list[str] = []
-        original_urlopen = module.urlopen
-        module.urlopen = lambda url, timeout=20.0: seen_urls.append(url) or _Response(payload)
-        try:
-            rows = self.gateway.list_rows('ASSETS')
-        finally:
-            module.urlopen = original_urlopen
-
-        self.assertEqual(len(rows), 1)
-        self.assertIn('sheet=Inventory%20Assets', seen_urls[0])
-        self.assertEqual(rows[0].row_number, 3)
-        self.assertEqual(rows[0].values['Asset_ID'], 'AST-001')
-        self.assertEqual(rows[0].values['Pilot (s)'], 'Pilot A')
-
-    def test_list_rows_in_auto_mode_falls_back_to_public_read_when_credentials_missing(self) -> None:
-        import vigilance_assets.google_sheets as module
-
-        gateway = GoogleSheetsTableGateway(
-            settings=GoogleSheetsSettings(spreadsheet_id='sheet-123', mode='auto'),
-            expected_headers=self.mapper.ordered_headers,
-        )
-        payload = (
-            'google.visualization.Query.setResponse('
-            '{"status":"ok","table":{"rows":['
-            '{"c":['
-            + ','.join('{"v":"%s"}' % header.replace('"', '\\"') for header in self.mapper.ordered_headers)
-            + ']},'
-            '{"c":[{"v":"AST-777"},{"v":"Fallback Asset"},{"v":"Cybersecurity Tool"}'
-            + ',null' * (len(self.mapper.ordered_headers) - 3)
-            + ']}'
-            ']}});'
-        )
-
-        with patch.object(module, 'urlopen', return_value=_Response(payload)) as mock_urlopen:
-            rows = gateway.list_rows('ASSETS')
-
-        self.assertEqual(rows[0].values['Asset_ID'], 'AST-777')
-        self.assertEqual(mock_urlopen.call_count, 1)
-
-    def test_build_snapshot_requires_expected_headers_by_name(self) -> None:
-        raw_rows = [
-            ['Asset_ID', 'Asset_Name', 'Asset_Category'],
-            ['AST-001', 'Threat Radar', 'Cybersecurity Tool'],
-        ]
-
-        with self.assertRaises(GoogleSheetsWorksheetError):
-            self.gateway._build_snapshot(sheet_name='ASSETS', sheet_id=None, raw_rows=raw_rows)
-
-    def test_build_google_sheets_gateway_uses_canonical_header_mapping(self) -> None:
-        gateway = build_google_sheets_gateway(
-            SpreadsheetBackendSettings(
-                backend='google_sheets',
-                sheets=SheetNames(assets='Inventory Assets', vocabularies='Controlled Vocabulary'),
-                google_sheets=GoogleSheetsSettings(spreadsheet_id='sheet-123', mode='read_only'),
+        with self.assertRaisesRegex(GoogleSheetsWorksheetError, 'missing headers'):
+            gateway._build_snapshot(
+                sheet_name='Inventory Assets',
+                sheet_id=123,
+                raw_rows=[
+                    ['Asset_ID', 'Asset_Name', 'Asset_Category'],
+                    ['AST-001', 'Threat Radar', 'Cybersecurity Tool'],
+                ],
             )
+
+    def test_build_snapshot_rejects_unexpected_headers(self) -> None:
+        gateway = object.__new__(GoogleSheetsTableGateway)
+        gateway.settings = self.settings
+        gateway.expected_headers = self.mapper.ordered_headers
+        gateway._expected_headers = tuple(self.mapper.ordered_headers)
+        gateway._expected_header_set = set(self.mapper.ordered_headers)
+
+        with self.assertRaisesRegex(GoogleSheetsWorksheetError, 'unexpected headers'):
+            gateway._build_snapshot(
+                sheet_name='Inventory Assets',
+                sheet_id=123,
+                raw_rows=[list(self.mapper.ordered_headers) + ['Extra_Column']],
+            )
+
+    def test_validate_connection_uses_api_metadata_and_values(self) -> None:
+        metadata_call = Mock()
+        metadata_call.execute.return_value = {'sheets': [{'properties': {'title': 'Inventory Assets', 'sheetId': 99}}]}
+        values_call = Mock()
+        values_call.execute.return_value = {
+            'values': [
+                list(self.mapper.ordered_headers),
+                [
+                    'AST-001', 'Threat Radar', 'Cybersecurity Tool', 'OpenAI Security Lab', 'alice@example.org',
+                    'Pilot A', 'Aggregates threat findings for analysts.', 'Active', '4', '5', '7', 'RS3', 'T5.3',
+                    'Cloud', 'IEC 62443', 'Cloud Security', 'https://example.org/tool', '2026-03-21',
+                    'alice@example.org', 'SIEM (Security Information and Event Management)'
+                ] + [''] * (len(self.mapper.ordered_headers) - 20)
+            ]
+        }
+        service = Mock()
+        service.spreadsheets.return_value.get.return_value = metadata_call
+        service.spreadsheets.return_value.values.return_value.get.return_value = values_call
+
+        with patch.object(GoogleSheetsTableGateway, '_build_service', return_value=service):
+            gateway = GoogleSheetsTableGateway(settings=self.settings, expected_headers=self.mapper.ordered_headers)
+            snapshot = gateway.validate_connection()
+
+        self.assertEqual(snapshot.sheet_name, 'Inventory Assets')
+        self.assertEqual(snapshot.sheet_id, 99)
+        self.assertEqual(snapshot.rows[0].values['Asset_ID'], 'AST-001')
+        self.assertEqual(snapshot.rows[0].row_number, 2)
+
+    def test_build_google_sheets_gateway_validates_on_construction(self) -> None:
+        fake_gateway = Mock(spec=GoogleSheetsTableGateway)
+        fake_gateway.validate_connection.return_value = None
+        with patch('vigilance_assets.google_sheets.GoogleSheetsTableGateway', return_value=fake_gateway) as gateway_class:
+            gateway = build_google_sheets_gateway(self.settings, self.mapper.ordered_headers)
+
+        self.assertIs(gateway, fake_gateway)
+        gateway_class.assert_called_once()
+        fake_gateway.validate_connection.assert_called_once_with()
+
+    def test_missing_credentials_path_fails_clearly(self) -> None:
+        settings = GoogleSheetsSettings(
+            spreadsheet_id='sheet-123',
+            credentials_path='/tmp/missing-creds.json',
         )
 
-        self.assertEqual(gateway.sheet_names.assets, 'Inventory Assets')
-        self.assertIn('Pilot (s)', gateway.expected_headers)
-        self.assertIn('Purpose (1-2 sentences)', gateway.expected_headers)
-
-    def test_append_row_rejects_read_only_mode(self) -> None:
-        with self.assertRaises(GoogleSheetsConfigurationError):
-            self.gateway.append_row('ASSETS', {'Asset_ID': 'AST-999'})
-
-    def test_read_write_mode_requires_credentials_for_authenticated_access(self) -> None:
-        gateway = GoogleSheetsTableGateway(
-            settings=GoogleSheetsSettings(spreadsheet_id='sheet-123', mode='read_write'),
-            expected_headers=self.mapper.ordered_headers,
-        )
-
-        with self.assertRaises(GoogleSheetsConfigurationError):
-            gateway.list_rows('ASSETS')
+        with self.assertRaisesRegex(GoogleSheetsConfigurationError, 'Google credentials file was not found'):
+            GoogleSheetsTableGateway(settings=settings, expected_headers=self.mapper.ordered_headers)
 
 
 if __name__ == '__main__':

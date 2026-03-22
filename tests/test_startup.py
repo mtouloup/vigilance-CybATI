@@ -3,40 +3,40 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from vigilance_assets import create_repository_from_settings, load_runtime_settings
-from vigilance_assets.google_sheets import GoogleSheetsConfigurationError
+from vigilance_assets import AppRuntimeSettings, GoogleSheetsSettings, create_repository_from_settings
+from vigilance_assets.google_sheets import GoogleSheetsConfigurationError, GoogleSheetsWorksheetError
 
 
 class GoogleSheetsStartupBehaviorTests(unittest.TestCase):
-    def test_repository_read_only_gateway_raises_clear_error_for_write_without_credentials(self) -> None:
-        repository = create_repository_from_settings(
-            load_runtime_settings(
-                {
-                    'VIGILANCE_SPREADSHEET_BACKEND': 'google_sheets',
-                    'VIGILANCE_SPREADSHEET_GOOGLE_ID': 'sheet-123',
-                    'VIGILANCE_GOOGLE_SHEETS_MODE': 'auto',
-                }
+    def test_repository_startup_surfaces_missing_worksheet_errors(self) -> None:
+        settings = AppRuntimeSettings(
+            google_sheets=GoogleSheetsSettings(
+                spreadsheet_id='sheet-123',
+                credentials_json='{"type": "service_account"}',
             )
         )
 
-        with self.assertRaisesRegex(GoogleSheetsConfigurationError, 'read_only mode'):
-            repository.gateway.append_row('ASSETS', {'Asset_ID': 'AST-123'})
+        with patch(
+            'vigilance_assets.runtime.build_google_sheets_gateway',
+            side_effect=GoogleSheetsWorksheetError("Worksheet 'ASSETS' was not found in the target spreadsheet."),
+        ):
+            with self.assertRaisesRegex(GoogleSheetsWorksheetError, "Worksheet 'ASSETS' was not found"):
+                create_repository_from_settings(settings)
 
-    def test_repository_google_sheets_read_path_can_be_mocked_without_network(self) -> None:
-        repository = create_repository_from_settings(
-            load_runtime_settings(
-                {
-                    'VIGILANCE_SPREADSHEET_BACKEND': 'google_sheets',
-                    'VIGILANCE_SPREADSHEET_GOOGLE_ID': 'sheet-123',
-                    'VIGILANCE_GOOGLE_SHEETS_MODE': 'auto',
-                }
+    def test_repository_startup_surfaces_invalid_credentials_errors(self) -> None:
+        settings = AppRuntimeSettings(
+            google_sheets=GoogleSheetsSettings(
+                spreadsheet_id='sheet-123',
+                credentials_json='{"type": "service_account"}',
             )
         )
 
-        with patch.object(repository.gateway, 'list_rows', return_value=[]):
-            page = repository.list_assets()
-
-        self.assertEqual(page.total, 0)
+        with patch(
+            'vigilance_assets.runtime.build_google_sheets_gateway',
+            side_effect=GoogleSheetsConfigurationError('Failed to load Google service account credentials.'),
+        ):
+            with self.assertRaisesRegex(GoogleSheetsConfigurationError, 'Failed to load Google service account credentials'):
+                create_repository_from_settings(settings)
 
 
 if __name__ == '__main__':

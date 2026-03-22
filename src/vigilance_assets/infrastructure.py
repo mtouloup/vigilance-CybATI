@@ -12,7 +12,7 @@ def build_spreadsheet_repository(
     *,
     env: Mapping[str, str] | None = None,
 ) -> SpreadsheetAssetRepository:
-    """Build a spreadsheet repository from runtime settings."""
+    """Build the Google-Sheets-backed repository from runtime settings."""
 
     resolved_settings = settings or load_runtime_settings(env)
     return create_repository_from_settings(resolved_settings)
