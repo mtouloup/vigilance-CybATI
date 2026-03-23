@@ -108,6 +108,9 @@ class WorksheetSnapshot:
     sheet_name: str
     sheet_id: int | None
     headers: tuple[str, ...]
+    header_row_number: int
+    canonical_indexes: tuple[int, ...]
+    worksheet_column_count: int
     rows: tuple[SheetRecord, ...]
 
 
@@ -159,11 +162,20 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
         if self.is_read_only:
             raise GoogleSheetsReadOnlyError(self._read_only_message(sheet_name))
         snapshot = self._load_snapshot(sheet_name)
-        body = {"values": [self._row_to_ordered_values(values, snapshot.headers)]}
+        append_range = self._append_range(snapshot)
+        ordered_values = self._row_to_worksheet_values(values, snapshot)
+        body = {"values": [ordered_values]}
+        LOGGER.info(
+            "Appending asset row to Google Sheet spreadsheet=%s worksheet=%s range=%s values=%s",
+            self.settings.spreadsheet_id,
+            snapshot.sheet_name,
+            append_range,
+            ordered_values,
+        )
         try:
-            self._spreadsheets_values().append(
+            response = self._spreadsheets_values().append(
                 spreadsheetId=self.settings.spreadsheet_id,
-                range=self._worksheet_range(snapshot.sheet_name),
+                range=append_range,
                 valueInputOption="USER_ENTERED",
                 insertDataOption="INSERT_ROWS",
                 includeValuesInResponse=True,
@@ -176,7 +188,16 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
             )
             LOGGER.exception(message)
             raise GoogleSheetsConnectivityError(message) from exc
-        return self._find_appended_row(snapshot.sheet_name, values.get("Asset_ID"))
+        LOGGER.info(
+            "Google Sheets append response spreadsheet=%s worksheet=%s range=%s updates=%s",
+            self.settings.spreadsheet_id,
+            snapshot.sheet_name,
+            append_range,
+            response,
+        )
+        appended_row_number = self._extract_appended_row_number(response)
+        self._validate_append_response(response, snapshot.sheet_name)
+        return self._find_appended_row(snapshot.sheet_name, values.get("Asset_ID"), appended_row_number=appended_row_number)
 
     def update_row(self, sheet_name: str, row_number: int, values: RowData) -> SheetRecord:
         if self.is_read_only:
@@ -344,6 +365,9 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
             sheet_name=sheet_name,
             sheet_id=sheet_id,
             headers=selection.canonical_headers,
+            header_row_number=selection.header_row_index + 1,
+            canonical_indexes=selection.canonical_indexes,
+            worksheet_column_count=len(selection.headers),
             rows=tuple(records),
         )
 
@@ -409,8 +433,19 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
     def _row_to_ordered_values(self, values: RowData, headers: Sequence[str]) -> list[Any]:
         return [self._serialize_outbound_value(values.get(header)) for header in headers]
 
-    def _find_appended_row(self, sheet_name: str, asset_id: Any) -> SheetRecord:
+    def _row_to_worksheet_values(self, values: RowData, snapshot: WorksheetSnapshot) -> list[Any]:
+        worksheet_values = [""] * snapshot.worksheet_column_count
+        for header, column_index in zip(snapshot.headers, snapshot.canonical_indexes):
+            worksheet_values[column_index] = self._serialize_outbound_value(values.get(header))
+        return worksheet_values
+
+    def _find_appended_row(self, sheet_name: str, asset_id: Any, *, appended_row_number: int | None = None) -> SheetRecord:
         snapshot = self._load_snapshot(sheet_name)
+        if appended_row_number is not None:
+            for record in snapshot.rows:
+                if record.row_number == appended_row_number:
+                    if asset_id is None or record.values.get("Asset_ID") == asset_id:
+                        return record
         if asset_id is None:
             if not snapshot.rows:
                 raise GoogleSheetsWorksheetError("The appended row could not be confirmed after the write completed.")
@@ -424,6 +459,51 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
 
     def _worksheet_range(self, sheet_name: str) -> str:
         return f"'{sheet_name}'"
+
+    def _append_range(self, snapshot: WorksheetSnapshot) -> str:
+        end_column = self._column_index_to_a1(snapshot.worksheet_column_count - 1)
+        return f"{self._worksheet_range(snapshot.sheet_name)}!A{snapshot.header_row_number}:{end_column}"
+
+    @staticmethod
+    def _column_index_to_a1(column_index: int) -> str:
+        if column_index < 0:
+            raise ValueError("Column index must be non-negative.")
+        result = ""
+        current = column_index + 1
+        while current:
+            current, remainder = divmod(current - 1, 26)
+            result = chr(65 + remainder) + result
+        return result
+
+    def _validate_append_response(self, response: dict[str, Any], sheet_name: str) -> None:
+        updates = response.get("updates")
+        if not isinstance(updates, dict):
+            raise GoogleSheetsWorksheetError(
+                f"Google Sheets append response for worksheet {sheet_name!r} did not include update metadata."
+            )
+        updated_rows = updates.get("updatedRows")
+        updated_range = updates.get("updatedRange")
+        if updated_rows != 1 or not updated_range:
+            raise GoogleSheetsWorksheetError(
+                f"Google Sheets append response for worksheet {sheet_name!r} did not confirm a single appended row: {updates!r}."
+            )
+
+    @staticmethod
+    def _extract_appended_row_number(response: dict[str, Any]) -> int | None:
+        updates = response.get("updates")
+        if not isinstance(updates, dict):
+            return None
+        updated_range = updates.get("updatedRange")
+        if not isinstance(updated_range, str):
+            return None
+        match = re.search(r"![A-Z]+(\d+):[A-Z]+(\d+)$", updated_range)
+        if match is None:
+            return None
+        start_row = int(match.group(1))
+        end_row = int(match.group(2))
+        if start_row != end_row:
+            return None
+        return start_row
 
     def _create_api_service(self) -> Any:
         credentials = _load_service_account_credentials(self.settings)

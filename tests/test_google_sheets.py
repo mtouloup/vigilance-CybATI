@@ -98,6 +98,8 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
         )
 
         self.assertEqual(snapshot.headers, self.mapper.ordered_headers)
+        self.assertEqual(snapshot.header_row_number, 2)
+        self.assertEqual(snapshot.worksheet_column_count, row_length)
         self.assertEqual(snapshot.rows[0].row_number, 3)
         self.assertEqual(snapshot.rows[0].values['Asset_ID'], 'AST-001')
         self.assertEqual(snapshot.rows[0].values['Tool_Type'], 'SIEM (Security Information and Event Management)')
@@ -239,6 +241,84 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
             _load_service_account_credentials(
                 GoogleSheetsSettings(spreadsheet_id='sheet-123', service_account_json='not-json')
             )
+
+    def test_append_row_targets_canonical_header_row_with_separator_columns(self) -> None:
+        gateway = GoogleSheetsTableGateway(settings=self.auth_settings, expected_headers=self.mapper.ordered_headers, api_service=Mock())
+        headers = list(self.mapper.ordered_headers)
+        tool_type_index = headers.index('Tool_Type')
+        service_type_index = headers.index('Service_Type')
+        row_length = len(headers) + 2
+        end_column = gateway._column_index_to_a1(row_length - 1)
+        actual_header_row = headers[:tool_type_index] + ['Tool_Type', ''] + headers[tool_type_index + 1:service_type_index] + [''] + headers[service_type_index:]
+
+        initial_snapshot = gateway._build_snapshot(
+            sheet_name='Inventory Assets',
+            sheet_id=12,
+            raw_rows=[
+                ['Decorative groupings'] + [''] * (row_length - 1),
+                actual_header_row,
+                ['AST-001', 'Threat Radar', 'Cybersecurity Tool'] + [''] * (row_length - 3),
+            ],
+        )
+        appended_row = [''] * row_length
+        appended_row[0] = 'ASSET-003'
+        appended_row[1] = 'Fresh Asset'
+        appended_row[2] = 'Cybersecurity Tool'
+        appended_row[tool_type_index] = 'SIEM (Security Information and Event Management)'
+        appended_snapshot = gateway._build_snapshot(
+            sheet_name='Inventory Assets',
+            sheet_id=12,
+            raw_rows=[
+                ['Decorative groupings'] + [''] * (row_length - 1),
+                actual_header_row,
+                ['AST-001', 'Threat Radar', 'Cybersecurity Tool'] + [''] * (row_length - 3),
+                appended_row,
+            ],
+        )
+        gateway._load_snapshot = Mock(side_effect=[initial_snapshot, appended_snapshot])
+        values_resource = Mock()
+        values_resource.append.return_value.execute.return_value = {
+            'updates': {
+                'updatedRange': f"'Inventory Assets'!A4:{end_column}4",
+                'updatedRows': 1,
+                'updatedColumns': row_length,
+            }
+        }
+        gateway._spreadsheets_values = Mock(return_value=values_resource)
+
+        record = gateway.append_row('Inventory Assets', {
+            'Asset_ID': 'ASSET-003',
+            'Asset_Name': 'Fresh Asset',
+            'Asset_Category': 'Cybersecurity Tool',
+            'Tool_Type': 'SIEM (Security Information and Event Management)',
+        })
+
+        append_kwargs = values_resource.append.call_args.kwargs
+        self.assertEqual(append_kwargs['range'], f"'Inventory Assets'!A2:{end_column}")
+        sent_values = append_kwargs['body']['values'][0]
+        self.assertEqual(len(sent_values), row_length)
+        self.assertEqual(sent_values[0], 'ASSET-003')
+        self.assertEqual(sent_values[1], 'Fresh Asset')
+        self.assertEqual(sent_values[tool_type_index], 'SIEM (Security Information and Event Management)')
+        self.assertEqual(sent_values[tool_type_index + 1], '')
+        self.assertEqual(sent_values[service_type_index + 1], '')
+        self.assertEqual(record.row_number, 4)
+        self.assertEqual(record.values['Asset_ID'], 'ASSET-003')
+
+    def test_append_row_requires_confirmed_google_api_update_metadata(self) -> None:
+        gateway = GoogleSheetsTableGateway(settings=self.auth_settings, expected_headers=self.mapper.ordered_headers, api_service=Mock())
+        snapshot = gateway._build_snapshot(
+            sheet_name='Inventory Assets',
+            sheet_id=12,
+            raw_rows=[list(self.mapper.ordered_headers)],
+        )
+        gateway._load_snapshot = Mock(return_value=snapshot)
+        values_resource = Mock()
+        values_resource.append.return_value.execute.return_value = {'updates': {'updatedRows': 0}}
+        gateway._spreadsheets_values = Mock(return_value=values_resource)
+
+        with self.assertRaisesRegex(GoogleSheetsWorksheetError, 'did not confirm a single appended row'):
+            gateway.append_row('Inventory Assets', {'Asset_ID': 'ASSET-003'})
 
 
 if __name__ == '__main__':
