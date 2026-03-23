@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import unittest
 from unittest.mock import Mock, patch
+from httplib2 import Response
 from urllib.error import HTTPError
+
+from googleapiclient.errors import HttpError
 
 from vigilance_assets.config import GoogleSheetsSettings
 from vigilance_assets.google_sheets import (
     GoogleSheetsConfigurationError,
+    GoogleSheetsConnectivityError,
     GoogleSheetsReadOnlyError,
     GoogleSheetsTableGateway,
     GoogleSheetsWorksheetError,
@@ -155,6 +159,37 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
         self.assertEqual(snapshot.sheet_id, 12)
         self.assertEqual(snapshot.rows[0].values['Asset_ID'], 'AST-001')
         self.assertFalse(gateway.is_read_only)
+
+
+    def test_authenticated_metadata_error_includes_google_api_details_and_guidance(self) -> None:
+        error_content = b'{"error":{"code":403,"message":"Google Sheets API has not been used in project 123 before or it is disabled.","status":"PERMISSION_DENIED"}}'
+        service = Mock()
+        service.spreadsheets.return_value.get.return_value.execute.side_effect = HttpError(
+            Response({'status': '403'}),
+            error_content,
+        )
+
+        gateway = GoogleSheetsTableGateway(
+            settings=self.auth_settings,
+            expected_headers=self.mapper.ordered_headers,
+            api_service=service,
+        )
+
+        with self.assertRaisesRegex(GoogleSheetsConnectivityError, 'Underlying Google API error: HTTP 403 Forbidden') as context:
+            gateway.validate_connection()
+
+        self.assertIn('Google Sheets API is disabled', str(context.exception))
+        self.assertIn('shared with the service account email', str(context.exception))
+        self.assertIsInstance(context.exception.__cause__, HttpError)
+
+    def test_invalid_service_account_payload_includes_actionable_guidance(self) -> None:
+        with self.assertRaisesRegex(GoogleSheetsConfigurationError, 'belongs to the intended Google Cloud project'):
+            _load_service_account_credentials(
+                GoogleSheetsSettings(
+                    spreadsheet_id='sheet-123',
+                    service_account_json='{"type":"service_account"}',
+                )
+            )
 
     def test_authenticated_gateway_can_delete_rows(self) -> None:
         gateway = GoogleSheetsTableGateway(
