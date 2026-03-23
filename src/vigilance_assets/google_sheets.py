@@ -5,6 +5,7 @@ import io
 import json
 import re
 import unicodedata
+from http import HTTPStatus
 from dataclasses import dataclass
 import logging
 from pathlib import Path
@@ -22,6 +23,68 @@ from .spreadsheet import RowData, SheetRecord, SpreadsheetBackendError, Spreadsh
 
 LOGGER = logging.getLogger(__name__)
 SHEETS_API_SCOPE = "https://www.googleapis.com/auth/spreadsheets"
+
+
+def _extract_google_api_error_details(exc: HttpError) -> str:
+    status = getattr(getattr(exc, "resp", None), "status", None)
+    reason = getattr(exc, "reason", None)
+    details: list[str] = []
+    if status is not None:
+        try:
+            phrase = HTTPStatus(status).phrase
+            details.append(f"HTTP {status} {phrase}")
+        except ValueError:
+            details.append(f"HTTP {status}")
+    if reason:
+        details.append(str(reason))
+
+    content = getattr(exc, "content", None)
+    if content:
+        try:
+            payload = json.loads(content.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError, AttributeError):
+            payload = None
+        if isinstance(payload, dict):
+            error = payload.get("error")
+            if isinstance(error, dict):
+                message = error.get("message")
+                if message:
+                    details.append(str(message))
+                status_text = error.get("status")
+                if status_text:
+                    details.append(f"status={status_text}")
+    if not details:
+        return str(exc) or exc.__class__.__name__
+    return "; ".join(dict.fromkeys(details))
+
+
+def _google_api_setup_guidance(exc: HttpError) -> list[str]:
+    status = getattr(getattr(exc, "resp", None), "status", None)
+    details = _extract_google_api_error_details(exc).casefold()
+    guidance: list[str] = []
+    if status in {403, 429, 503} or "service disabled" in details or "api has not been used" in details or "google sheets api" in details and "enable" in details:
+        guidance.append(
+            "If the Google Sheets API is disabled for the Google Cloud project that owns the service account, enable the Google Sheets API for that project and retry."
+        )
+    if status in {401, 403, 404} or "not found" in details or "permission" in details or "caller does not have permission" in details:
+        guidance.append(
+            "Confirm that the target spreadsheet is shared with the service account email and that VIGILANCE_GOOGLE_SPREADSHEET_ID points to the correct spreadsheet."
+        )
+    if status in {500, 502, 503, 504}:
+        guidance.append(
+            "The Google Sheets API may be temporarily unavailable; verify Google API availability and retry once connectivity is restored."
+        )
+    return guidance
+
+
+def _format_google_api_error(context: str, exc: HttpError) -> str:
+    details = _extract_google_api_error_details(exc)
+    guidance = _google_api_setup_guidance(exc)
+    message = f"{context} Underlying Google API error: {details}."
+    if guidance:
+        message = f"{message} {' '.join(guidance)}"
+    return message
+
 
 
 class GoogleSheetsConfigurationError(SpreadsheetBackendError):
@@ -107,7 +170,12 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
                 body=body,
             ).execute()
         except HttpError as exc:
-            raise GoogleSheetsConnectivityError("Failed to append a row through the Google Sheets API.") from exc
+            message = _format_google_api_error(
+                "Failed to append a row through the Google Sheets API.",
+                exc,
+            )
+            LOGGER.exception(message)
+            raise GoogleSheetsConnectivityError(message) from exc
         return self._find_appended_row(snapshot.sheet_name, values.get("Asset_ID"))
 
     def update_row(self, sheet_name: str, row_number: int, values: RowData) -> SheetRecord:
@@ -122,9 +190,12 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
                 body={"values": [self._row_to_ordered_values(values, snapshot.headers)]},
             ).execute()
         except HttpError as exc:
-            raise GoogleSheetsConnectivityError(
-                f"Failed to update row {row_number} through the Google Sheets API."
-            ) from exc
+            message = _format_google_api_error(
+                f"Failed to update row {row_number} through the Google Sheets API.",
+                exc,
+            )
+            LOGGER.exception(message)
+            raise GoogleSheetsConnectivityError(message) from exc
         return SheetRecord(row_number=row_number, values=dict(values))
 
     def delete_row(self, sheet_name: str, row_number: int) -> None:
@@ -154,9 +225,12 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
                 },
             ).execute()
         except HttpError as exc:
-            raise GoogleSheetsConnectivityError(
-                f"Failed to delete row {row_number} through the Google Sheets API."
-            ) from exc
+            message = _format_google_api_error(
+                f"Failed to delete row {row_number} through the Google Sheets API.",
+                exc,
+            )
+            LOGGER.exception(message)
+            raise GoogleSheetsConnectivityError(message) from exc
 
     def validate_connection(self) -> WorksheetSnapshot:
         snapshot = self._load_snapshot(self.worksheet_name)
@@ -189,7 +263,12 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
                 fields="sheets(properties(sheetId,title))",
             ).execute()
         except HttpError as exc:
-            raise GoogleSheetsConnectivityError("Failed to load spreadsheet metadata from the Google Sheets API.") from exc
+            message = _format_google_api_error(
+                "Failed to load spreadsheet metadata from the Google Sheets API.",
+                exc,
+            )
+            LOGGER.exception(message)
+            raise GoogleSheetsConnectivityError(message) from exc
         for sheet in response.get("sheets", []):
             properties = sheet.get("properties", {})
             if properties.get("title") == sheet_name:
@@ -206,9 +285,12 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
                 majorDimension="ROWS",
             ).execute()
         except HttpError as exc:
-            raise GoogleSheetsConnectivityError(
-                f"Failed to read worksheet {sheet_name!r} through the Google Sheets API."
-            ) from exc
+            message = _format_google_api_error(
+                f"Failed to read worksheet {sheet_name!r} through the Google Sheets API.",
+                exc,
+            )
+            LOGGER.exception(message)
+            raise GoogleSheetsConnectivityError(message) from exc
         rows = [list(row) for row in response.get("values", [])]
         if not rows:
             raise GoogleSheetsWorksheetError(
@@ -401,21 +483,33 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
 
 
 def _load_service_account_credentials(settings: GoogleSheetsSettings) -> Credentials:
+    guidance = (
+        " Confirm that the service account JSON is valid, belongs to the intended Google Cloud project, "
+        "and that the target spreadsheet is shared with the service account email."
+    )
     if settings.service_account_file:
         credential_path = Path(settings.service_account_file)
         if not credential_path.exists():
             raise GoogleSheetsConfigurationError(
-                f"Service account credentials file was not found: {credential_path}"
+                f"Service account credentials file was not found: {credential_path}." + guidance
             )
-        return Credentials.from_service_account_file(str(credential_path), scopes=[SHEETS_API_SCOPE])
+        try:
+            return Credentials.from_service_account_file(str(credential_path), scopes=[SHEETS_API_SCOPE])
+        except (ValueError, TypeError) as exc:
+            message = f"Failed to load Google service account credentials from {credential_path}." + guidance
+            raise GoogleSheetsConfigurationError(message) from exc
     if settings.service_account_json:
         try:
             info = json.loads(settings.service_account_json)
         except json.JSONDecodeError as exc:
             raise GoogleSheetsConfigurationError(
-                "VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON."
+                "VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON is not valid JSON." + guidance
             ) from exc
-        return Credentials.from_service_account_info(info, scopes=[SHEETS_API_SCOPE])
+        try:
+            return Credentials.from_service_account_info(info, scopes=[SHEETS_API_SCOPE])
+        except (ValueError, TypeError) as exc:
+            message = "Failed to load Google service account credentials from VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON." + guidance
+            raise GoogleSheetsConfigurationError(message) from exc
     raise GoogleSheetsConfigurationError(
         "Authenticated Google Sheets mode requires VIGILANCE_GOOGLE_SERVICE_ACCOUNT_FILE or "
         "VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON."
@@ -424,5 +518,14 @@ def _load_service_account_credentials(settings: GoogleSheetsSettings) -> Credent
 
 def build_google_sheets_gateway(settings: GoogleSheetsSettings, expected_headers: Sequence[str]) -> GoogleSheetsTableGateway:
     gateway = GoogleSheetsTableGateway(settings=settings, expected_headers=expected_headers)
-    gateway.validate_connection()
+    try:
+        gateway.validate_connection()
+    except (GoogleSheetsConfigurationError, GoogleSheetsConnectivityError, GoogleSheetsWorksheetError):
+        LOGGER.exception(
+            "Google Sheets startup validation failed for spreadsheet %s worksheet %s in %s mode.",
+            settings.spreadsheet_id,
+            settings.worksheet_name,
+            settings.runtime_mode_label,
+        )
+        raise
     return gateway
