@@ -2,11 +2,14 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
+import logging
 from typing import Any, Literal, Mapping, Sequence
 
 from .models import AssetRecord, build_asset_record
 from .schema import AssetSchemaCatalog, FieldDefinition, load_schema_catalog
 from .spreadsheet import SpreadsheetTableGateway
+
+LOGGER = logging.getLogger(__name__)
 
 SortDirection = Literal["asc", "desc"]
 DeleteMode = Literal["archive", "delete"]
@@ -233,17 +236,34 @@ class SpreadsheetAssetRepository(AssetRepository):
         gateway.update_row(self.mapper.sheet_name, row_number, self.mapper.asset_to_row(archived_asset))
 
     def iter_inventory_payloads(self) -> tuple[InventoryPayload, ...]:
-        return tuple(
-            InventoryPayload(payload=self.mapper.row_to_payload(record.values), row_number=record.row_number)
-            for record in self._require_gateway().list_rows(self.mapper.sheet_name)
-        )
+        payloads: list[InventoryPayload] = []
+        for record in self._require_gateway().list_rows(self.mapper.sheet_name):
+            payload = self.mapper.row_to_payload(record.values)
+            if not self.mapper.is_parsable_asset_payload(payload):
+                continue
+            payloads.append(InventoryPayload(payload=payload, row_number=record.row_number))
+        return tuple(payloads)
 
     def _load_sheet_rows(self) -> list[tuple[int, AssetRecord]]:
         gateway = self._require_gateway()
-        return [
-            (record.row_number, self.mapper.row_to_asset(record.values))
-            for record in gateway.list_rows(self.mapper.sheet_name)
-        ]
+        scanned_rows = 0
+        skipped_rows = 0
+        parsed_rows: list[tuple[int, AssetRecord]] = []
+        for record in gateway.list_rows(self.mapper.sheet_name):
+            scanned_rows += 1
+            payload = self.mapper.row_to_payload(record.values)
+            if not self.mapper.is_parsable_asset_payload(payload):
+                skipped_rows += 1
+                continue
+            parsed_rows.append((record.row_number, self.mapper.payload_to_asset(payload)))
+        LOGGER.debug(
+            "Loaded asset rows from workbook=%s scanned=%s skipped=%s parsed=%s",
+            self.workbook_reference,
+            scanned_rows,
+            skipped_rows,
+            len(parsed_rows),
+        )
+        return parsed_rows
 
     def _find_asset_row(self, asset_id: str) -> tuple[int | None, AssetRecord | None]:
         for row_number, asset in self._load_sheet_rows():
