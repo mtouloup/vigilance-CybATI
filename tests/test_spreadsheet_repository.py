@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import unittest
 
-from vigilance_assets import AssetListQuery, AssetSort, SpreadsheetAssetRepository
+from vigilance_assets import AssetListQuery, AssetSort, DuplicateAssetError, SpreadsheetAssetRepository
 from vigilance_assets.spreadsheet import SheetRecord
 
 
@@ -10,7 +10,30 @@ class FakeSpreadsheetGateway:
     def __init__(self) -> None:
         self._rows = [
             SheetRecord(
+                row_number=1,
+                values={
+                    "Tool_Type": "CYBERSECURITY TOOL–SPECIFIC FIELDS (if Asset_Category = Cybersecurity Tool)",
+                    "Service_Type": "PLATFORM / SERVICE—SPECIFIC FIELDS (if Asset_Category = Platform / Service)",
+                },
+            ),
+            SheetRecord(
                 row_number=2,
+                values={
+                    "Asset_ID": "Asset_ID",
+                    "Asset_Name": "Asset_Name",
+                    "Asset_Category": "Asset_Category",
+                },
+            ),
+            SheetRecord(row_number=3, values={}),
+            SheetRecord(
+                row_number=4,
+                values={
+                    "Asset_Name": "Missing discriminator row",
+                    "Owner_Org": "OpenAI Security Lab",
+                },
+            ),
+            SheetRecord(
+                row_number=5,
                 values={
                     "Asset_ID": "AST-001",
                     "Asset_Name": "Threat Radar",
@@ -32,7 +55,7 @@ class FakeSpreadsheetGateway:
                 },
             ),
             SheetRecord(
-                row_number=3,
+                row_number=6,
                 values={
                     "Asset_ID": "AST-003",
                     "Asset_Name": "Telemetry Lake",
@@ -137,6 +160,36 @@ class SpreadsheetRepositoryTests(unittest.TestCase):
         self.assertEqual(page.page_size, 1)
         self.assertEqual(page.items[0].asset_id, "AST-002")
 
+    def test_load_sheet_rows_skips_layout_artifacts_and_partial_rows(self) -> None:
+        rows = self.repository._load_sheet_rows()
+
+        self.assertEqual([row_number for row_number, _ in rows], [5, 6])
+        self.assertEqual([asset.asset_id for _, asset in rows], ["AST-001", "AST-003"])
+
+    def test_duplicate_check_get_asset_ignores_non_asset_rows_before_insert(self) -> None:
+        asset = self.repository.mapper.row_to_asset(
+            {
+                "Asset_ID": "AST-001",
+                "Asset_Name": "Threat Radar",
+                "Asset_Category": "Cybersecurity Tool",
+                "Owner_Org": "OpenAI Security Lab",
+                "Owner_Contact": "alice@example.org",
+                "Pilot (s)": "Pilot A",
+                "Purpose (1-2 sentences)": "Aggregates threat findings for analysts.",
+                "Status": "Active",
+                "TRL_Start": 4,
+                "TRL_Target": 7,
+                "Related_Result": "RS3",
+                "Related_WP_Task": "T5.3",
+                "Deployment_Context": "Cloud",
+                "Last_Updated": "2026-03-21",
+                "Updated_By": "alice@example.org",
+                "Tool_Type": "SIEM (Security Information and Event Management)",
+            }
+        )
+
+        with self.assertRaisesRegex(DuplicateAssetError, "AST-001"):
+            self.repository.create_asset(asset)
 
     def test_delete_asset_archives_by_default(self) -> None:
         self.repository.delete_asset('AST-001')

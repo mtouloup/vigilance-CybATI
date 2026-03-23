@@ -48,6 +48,45 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
                 ],
             )
 
+    def test_build_snapshot_skips_blank_and_non_asset_rows_after_header(self) -> None:
+        gateway = GoogleSheetsTableGateway(settings=self.auth_settings, expected_headers=self.mapper.ordered_headers)
+        headers = list(self.mapper.ordered_headers)
+        blank_row = [""] * len(headers)
+        partial_row = [""] * len(headers)
+        partial_row[headers.index("Asset_Name")] = "Separator-ish row"
+        valid_row = [""] * len(headers)
+        valid_values = {
+            "Asset_ID": "AST-010",
+            "Asset_Name": "Threat Radar",
+            "Asset_Category": "Cybersecurity Tool",
+            "Owner_Org": "OpenAI Security Lab",
+            "Owner_Contact": "alice@example.org",
+            "Pilot (s)": "Pilot A",
+            "Purpose (1-2 sentences)": "Aggregates threat findings for analysts.",
+            "Status": "Active",
+            "TRL_Start": "4",
+            "TRL_Target": "7",
+            "Related_Result": "RS3",
+            "Related_WP_Task": "T5.3",
+            "Deployment_Context": "Cloud",
+            "Last_Updated": "2026-03-21",
+            "Updated_By": "alice@example.org",
+            "Tool_Type": "SIEM (Security Information and Event Management)",
+        }
+        for index, header in enumerate(headers):
+            if header in valid_values:
+                valid_row[index] = valid_values[header]
+
+        snapshot = gateway._build_snapshot(
+            sheet_name='Inventory Assets',
+            sheet_id=None,
+            raw_rows=[headers, blank_row, partial_row, valid_row],
+        )
+
+        self.assertEqual(len(snapshot.rows), 1)
+        self.assertEqual(snapshot.rows[0].row_number, 4)
+        self.assertEqual(snapshot.rows[0].values['Asset_ID'], 'AST-010')
+
     def test_build_snapshot_ignores_decorative_row_and_blank_separator_columns(self) -> None:
         gateway = GoogleSheetsTableGateway(settings=self.auth_settings, expected_headers=self.mapper.ordered_headers)
         headers = list(self.mapper.ordered_headers)

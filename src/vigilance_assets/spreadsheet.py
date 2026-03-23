@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from datetime import date, datetime
 from typing import Any, Protocol
@@ -8,6 +9,8 @@ from .models import AssetRecord, build_asset_record, normalize_last_updated
 from .schema import AssetSchemaCatalog, FieldDefinition, load_schema_catalog
 
 ASSETS_SHEET_NAME = "ASSETS"
+
+LOGGER = logging.getLogger(__name__)
 
 CellValue = str | int | float | bool | date | datetime | None
 RowData = dict[str, CellValue]
@@ -74,8 +77,22 @@ class AssetSpreadsheetMapper:
                 payload[field_name] = converted
         return payload
 
+    def is_parsable_asset_payload(self, payload: dict[str, Any]) -> bool:
+        asset_id = payload.get("Asset_ID")
+        asset_category = payload.get("Asset_Category")
+        if not isinstance(asset_id, str) or not asset_id.strip():
+            return False
+        if not isinstance(asset_category, str) or not asset_category.strip():
+            return False
+        if asset_category not in self.catalog.category_fields:
+            return False
+        return True
+
     def row_to_asset(self, row: RowData) -> AssetRecord:
-        return build_asset_record(self.row_to_payload(row))
+        return self.payload_to_asset(self.row_to_payload(row))
+
+    def payload_to_asset(self, payload: dict[str, Any]) -> AssetRecord:
+        return build_asset_record(payload)
 
     def asset_to_row(self, asset: AssetRecord) -> RowData:
         payload = asset.to_dict()

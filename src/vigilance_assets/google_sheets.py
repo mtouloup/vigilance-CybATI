@@ -9,7 +9,7 @@ from http import HTTPStatus
 from dataclasses import dataclass
 import logging
 from pathlib import Path
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
@@ -19,6 +19,7 @@ from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 
 from .config import GoogleSheetsSettings
+from .schema import load_schema_catalog
 from .spreadsheet import RowData, SheetRecord, SpreadsheetBackendError, SpreadsheetTableGateway
 
 LOGGER = logging.getLogger(__name__)
@@ -144,6 +145,7 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
         self._normalized_expected_headers = {
             self._normalize_header_key(header): header for header in self._expected_headers
         }
+        self._expected_asset_categories = set(load_schema_catalog().category_fields)
         self._api_service = self.api_service
 
     @property
@@ -353,14 +355,31 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
             )
         selection = self._select_header_row(sheet_name, raw_rows)
         records: list[SheetRecord] = []
+        scanned_rows = 0
+        blank_rows = 0
+        skipped_rows = 0
         for row_number, row in enumerate(raw_rows[selection.header_row_index + 1 :], start=selection.header_row_index + 2):
+            scanned_rows += 1
             values = {
                 canonical_header: self._normalize_inbound_value(row[column_index] if column_index < len(row) else None)
                 for canonical_header, column_index in zip(selection.canonical_headers, selection.canonical_indexes)
             }
             if not any(value not in (None, "") for value in values.values()):
+                blank_rows += 1
+                continue
+            if not self._looks_like_asset_row(values):
+                skipped_rows += 1
                 continue
             records.append(SheetRecord(row_number=row_number, values=values))
+        LOGGER.debug(
+            "Loaded Google Sheets snapshot for worksheet=%s header_row=%s scanned=%s blank=%s skipped=%s parsed=%s",
+            sheet_name,
+            selection.header_row_index + 1,
+            scanned_rows,
+            blank_rows,
+            skipped_rows,
+            len(records),
+        )
         return WorksheetSnapshot(
             sheet_name=sheet_name,
             sheet_id=sheet_id,
@@ -370,6 +389,18 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
             worksheet_column_count=len(selection.headers),
             rows=tuple(records),
         )
+
+
+    def _looks_like_asset_row(self, values: Mapping[str, Any]) -> bool:
+        asset_id = values.get("Asset_ID")
+        asset_category = values.get("Asset_Category")
+        if not isinstance(asset_id, str) or not asset_id.strip():
+            return False
+        if not isinstance(asset_category, str) or not asset_category.strip():
+            return False
+        if asset_category not in self._expected_asset_categories:
+            return False
+        return True
 
     def _select_header_row(self, sheet_name: str, raw_rows: Sequence[Sequence[Any]]) -> HeaderSelection:
         best_selection: HeaderSelection | None = None
