@@ -344,6 +344,112 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
         self.assertEqual(record.row_number, 4)
         self.assertEqual(record.values['Asset_ID'], 'ASSET-003')
 
+    def test_append_row_aligns_common_and_selected_category_columns_only(self) -> None:
+        gateway = GoogleSheetsTableGateway(settings=self.auth_settings, expected_headers=self.mapper.ordered_headers, api_service=Mock())
+        headers = list(self.mapper.ordered_headers)
+        actual_header_row, canonical_column_map = self._header_with_category_separators(gateway, headers)
+        row_length = len(actual_header_row)
+        end_column = gateway._column_index_to_a1(row_length - 1)
+
+        initial_snapshot = gateway._build_snapshot(
+            sheet_name='Inventory Assets',
+            sheet_id=12,
+            raw_rows=[
+                ['Decorative groupings'] + [''] * (row_length - 1),
+                actual_header_row,
+                ['AST-001', 'Threat Radar', 'Cybersecurity Tool'] + [''] * (row_length - 3),
+            ],
+        )
+        gateway._load_snapshot = Mock(return_value=initial_snapshot)
+        values_resource = Mock()
+        values_resource.append.return_value.execute.return_value = {
+            'updates': {
+                'updatedRange': f"'Inventory Assets'!A4:{end_column}4",
+                'updatedRows': 1,
+                'updatedColumns': row_length,
+            }
+        }
+        gateway._spreadsheets_values = Mock(return_value=values_resource)
+        gateway._find_appended_row = Mock(return_value=Mock(row_number=4, values={'Asset_ID': 'AST-777'}))
+
+        cases = [
+            (
+                'Cybersecurity Tool',
+                {'Tool_Type': 'SIEM (Security Information and Event Management)'},
+                {'Tool_Type'},
+                {'Service_Type', 'Compute_Form'},
+            ),
+            (
+                'Platform / Service',
+                {'Service_Type': 'Security Service'},
+                {'Service_Type'},
+                {'Tool_Type', 'Compute_Form'},
+            ),
+            (
+                'Compute Resource',
+                {'Compute_Form': 'Container'},
+                {'Compute_Form'},
+                {'Tool_Type', 'Service_Type'},
+            ),
+        ]
+        for category, category_values, expected_filled, expected_blank in cases:
+            with self.subTest(category=category):
+                payload = {
+                    'Asset_ID': 'AST-777',
+                    'Asset_Name': f'{category} asset',
+                    'Asset_Category': category,
+                    **category_values,
+                }
+                gateway.append_row('Inventory Assets', payload)
+                append_kwargs = values_resource.append.call_args.kwargs
+                self.assertEqual(append_kwargs['range'], f"'Inventory Assets'!A2:{end_column}")
+                sent_values = append_kwargs['body']['values'][0]
+                self.assertEqual(len(sent_values), row_length)
+                self.assertEqual(sent_values[canonical_column_map['Asset_ID']], 'AST-777')
+                self.assertEqual(sent_values[canonical_column_map['Asset_Name']], f'{category} asset')
+                self.assertEqual(sent_values[canonical_column_map['Asset_Category']], category)
+                for field_name in expected_filled:
+                    self.assertNotEqual(sent_values[canonical_column_map[field_name]], '')
+                for field_name in expected_blank:
+                    self.assertEqual(sent_values[canonical_column_map[field_name]], '')
+
+                separator_indexes = [index for index, value in enumerate(actual_header_row) if not gateway._normalize_header_key(value)]
+                self.assertTrue(separator_indexes)
+                for separator_index in separator_indexes:
+                    self.assertEqual(sent_values[separator_index], '')
+
+    def test_aligned_row_round_trip_preserves_separators_and_column_mapping(self) -> None:
+        gateway = GoogleSheetsTableGateway(settings=self.auth_settings, expected_headers=self.mapper.ordered_headers, api_service=Mock())
+        headers = list(self.mapper.ordered_headers)
+        actual_header_row, canonical_column_map = self._header_with_category_separators(gateway, headers)
+        row_length = len(actual_header_row)
+        row = [''] * row_length
+        row[canonical_column_map['Asset_ID']] = 'AST-314'
+        row[canonical_column_map['Asset_Name']] = 'Compute host'
+        row[canonical_column_map['Asset_Category']] = 'Compute Resource'
+        row[canonical_column_map['Compute_Form']] = 'VM'
+        row[canonical_column_map['Service_Type']] = ''
+
+        snapshot = gateway._build_snapshot(
+            sheet_name='Inventory Assets',
+            sheet_id=12,
+            raw_rows=[
+                ['Decorative'] + [''] * (row_length - 1),
+                actual_header_row,
+                row,
+            ],
+        )
+
+        parsed_values = snapshot.rows[0].values
+        rebuilt = gateway._row_to_worksheet_values(parsed_values, snapshot)
+        self.assertEqual(len(rebuilt), row_length)
+        self.assertEqual(rebuilt[canonical_column_map['Asset_ID']], 'AST-314')
+        self.assertEqual(rebuilt[canonical_column_map['Compute_Form']], 'VM')
+        self.assertEqual(rebuilt[canonical_column_map['Service_Type']], '')
+        separator_indexes = [index for index, value in enumerate(actual_header_row) if not gateway._normalize_header_key(value)]
+        for separator_index in separator_indexes:
+            self.assertEqual(rebuilt[separator_index], '')
+
     def test_append_row_requires_confirmed_google_api_update_metadata(self) -> None:
         gateway = GoogleSheetsTableGateway(settings=self.auth_settings, expected_headers=self.mapper.ordered_headers, api_service=Mock())
         snapshot = gateway._build_snapshot(
@@ -358,6 +464,24 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
 
         with self.assertRaisesRegex(GoogleSheetsWorksheetError, 'did not confirm a single appended row'):
             gateway.append_row('Inventory Assets', {'Asset_ID': 'ASSET-003'})
+
+    @staticmethod
+    def _header_with_category_separators(
+        gateway: GoogleSheetsTableGateway,
+        headers: list[str],
+    ) -> tuple[list[str], dict[str, int]]:
+        block_starts = {'Service_Type', 'Compute_Form', 'Telemetry_Type', 'Store_Type', 'Asset_Subtype'}
+        expanded_headers: list[str] = []
+        for header in headers:
+            if header in block_starts:
+                expanded_headers.append('')
+            expanded_headers.append(header)
+        canonical_column_map = {
+            gateway._normalized_expected_headers[gateway._normalize_header_key(header)]: index
+            for index, header in enumerate(expanded_headers)
+            if gateway._normalize_header_key(header)
+        }
+        return expanded_headers, canonical_column_map
 
 
 if __name__ == '__main__':

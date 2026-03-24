@@ -111,6 +111,7 @@ class WorksheetSnapshot:
     headers: tuple[str, ...]
     header_row_number: int
     canonical_indexes: tuple[int, ...]
+    canonical_header_by_column: tuple[str | None, ...]
     worksheet_column_count: int
     rows: tuple[SheetRecord, ...]
 
@@ -386,6 +387,7 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
             headers=selection.canonical_headers,
             header_row_number=selection.header_row_index + 1,
             canonical_indexes=selection.canonical_indexes,
+            canonical_header_by_column=self._build_canonical_header_by_column(selection),
             worksheet_column_count=len(selection.headers),
             rows=tuple(records),
         )
@@ -466,9 +468,21 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
 
     def _row_to_worksheet_values(self, values: RowData, snapshot: WorksheetSnapshot) -> list[Any]:
         worksheet_values = [""] * snapshot.worksheet_column_count
-        for header, column_index in zip(snapshot.headers, snapshot.canonical_indexes):
-            worksheet_values[column_index] = self._serialize_outbound_value(values.get(header))
+        for column_index, canonical_header in enumerate(snapshot.canonical_header_by_column):
+            if canonical_header is None:
+                continue
+            worksheet_values[column_index] = self._serialize_outbound_value(values.get(canonical_header))
         return worksheet_values
+
+    def _build_canonical_header_by_column(self, selection: HeaderSelection) -> tuple[str | None, ...]:
+        header_by_normalized_key = {
+            self._normalize_header_key(header): header for header in selection.canonical_headers
+        }
+        aligned_headers: list[str | None] = []
+        for header in selection.headers:
+            normalized_key = self._normalize_header_key(header)
+            aligned_headers.append(header_by_normalized_key.get(normalized_key))
+        return tuple(aligned_headers)
 
     def _find_appended_row(self, sheet_name: str, asset_id: Any, *, appended_row_number: int | None = None) -> SheetRecord:
         snapshot = self._load_snapshot(sheet_name)
