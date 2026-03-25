@@ -1,7 +1,15 @@
 """VIGILANCE asset inventory service package."""
 
 from .api import create_app
-from .config import AppRuntimeSettings, ConfigurationError, DEFAULT_ASSETS_WORKSHEET, GoogleSheetsSettings, load_runtime_settings
+from .config import (
+    AppRuntimeSettings,
+    ConfigurationError,
+    DEFAULT_ASSETS_WORKSHEET,
+    DEFAULT_STORAGE_BACKEND,
+    GoogleSheetsSettings,
+    SharePointSettings,
+    load_runtime_settings,
+)
 from .google_sheets import (
     GoogleSheetsConfigurationError,
     GoogleSheetsConnectivityError,
@@ -37,6 +45,7 @@ from .repository import (
     UnsupportedVocabularyError,
 )
 from .runtime import create_repository_from_settings, create_runtime_app
+from .sharepoint import SharePointConfigurationError, SharePointConnectivityError, SharePointTableGateway, SharePointWorksheetError
 from .schema import AssetSchemaCatalog, load_schema_catalog
 from .service import AssetService
 from .spreadsheet import ASSETS_SHEET_NAME, AssetSpreadsheetMapper, SheetRecord, SpreadsheetBackendError, SpreadsheetTableGateway
@@ -70,6 +79,7 @@ __all__ = [
     "ConfigurationError",
     "CybersecurityToolFields",
     "DEFAULT_ASSETS_WORKSHEET",
+    "DEFAULT_STORAGE_BACKEND",
     "DataStoreFields",
     "DataStreamFields",
     "DuplicateAssetError",
@@ -85,6 +95,11 @@ __all__ = [
     "InventoryValidationReport",
     "PhysicalAssetFields",
     "PlatformServiceFields",
+    "SharePointConfigurationError",
+    "SharePointConnectivityError",
+    "SharePointSettings",
+    "SharePointTableGateway",
+    "SharePointWorksheetError",
     "SheetRecord",
     "SpreadsheetAssetRepository",
     "SpreadsheetBackendError",

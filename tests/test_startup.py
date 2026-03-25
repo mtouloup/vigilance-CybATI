@@ -3,14 +3,16 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from vigilance_assets import AppRuntimeSettings, GoogleSheetsSettings, create_repository_from_settings
+from vigilance_assets import AppRuntimeSettings, GoogleSheetsSettings, SharePointSettings, create_repository_from_settings
 from vigilance_assets.google_sheets import GoogleSheetsConnectivityError, GoogleSheetsWorksheetError
 
 
 class GoogleSheetsStartupBehaviorTests(unittest.TestCase):
     def test_repository_startup_surfaces_missing_worksheet_errors(self) -> None:
         settings = AppRuntimeSettings(
-            google_sheets=GoogleSheetsSettings(spreadsheet_id='sheet-123', service_account_json='{"type":"service_account"}')
+            storage_backend='google_sheets',
+            google_sheets=GoogleSheetsSettings(spreadsheet_id='sheet-123', service_account_json='{"type":"service_account"}'),
+            sharepoint=SharePointSettings(tenant_id='x', client_id='y', client_secret='z', site_id='s', item_id='i'),
         )
 
         with patch(
@@ -22,7 +24,9 @@ class GoogleSheetsStartupBehaviorTests(unittest.TestCase):
 
     def test_repository_startup_surfaces_connectivity_errors(self) -> None:
         settings = AppRuntimeSettings(
-            google_sheets=GoogleSheetsSettings(spreadsheet_id='sheet-123', service_account_json='{"type":"service_account"}')
+            storage_backend='google_sheets',
+            google_sheets=GoogleSheetsSettings(spreadsheet_id='sheet-123', service_account_json='{"type":"service_account"}'),
+            sharepoint=SharePointSettings(tenant_id='x', client_id='y', client_secret='z', site_id='s', item_id='i'),
         )
 
         with patch(
