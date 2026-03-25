@@ -112,6 +112,10 @@ class WorksheetSnapshot:
     header_row_number: int
     canonical_indexes: tuple[int, ...]
     canonical_header_by_column: tuple[str | None, ...]
+    canonical_index_by_header: Mapping[str, int]
+    asset_id_column_index: int
+    write_start_column_index: int
+    write_end_column_index: int
     worksheet_column_count: int
     rows: tuple[SheetRecord, ...]
 
@@ -146,7 +150,14 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
         self._normalized_expected_headers = {
             self._normalize_header_key(header): header for header in self._expected_headers
         }
-        self._expected_asset_categories = set(load_schema_catalog().category_fields)
+        catalog = load_schema_catalog()
+        self._expected_asset_categories = set(catalog.category_fields)
+        self._common_headers = {field.sheet_header for field in catalog.common_fields}
+        self._category_headers_by_category = {
+            category: {field.sheet_header for field in fields}
+            for category, fields in catalog.category_fields.items()
+        }
+        self._all_category_headers = set().union(*self._category_headers_by_category.values())
         self._api_service = self.api_service
 
     @property
@@ -165,7 +176,8 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
         if self.is_read_only:
             raise GoogleSheetsReadOnlyError(self._read_only_message(sheet_name))
         snapshot = self._load_snapshot(sheet_name)
-        start_column_index, end_column_index = self._canonical_column_span(snapshot)
+        start_column_index = snapshot.write_start_column_index
+        end_column_index = snapshot.write_end_column_index
         append_range = self._append_range(snapshot, start_column_index, end_column_index)
         ordered_values = self._row_to_aligned_worksheet_values(
             values,
@@ -180,13 +192,15 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
             self._column_mapping_diagnostics(snapshot),
         )
         LOGGER.info(
-            "Appending asset row to Google Sheet spreadsheet=%s worksheet=%s range=%s first_column=%s payload_length=%s values=%s",
+            "Appending asset row to Google Sheet spreadsheet=%s worksheet=%s range=%s start_column=%s(%s) payload_width=%s values=%s populated_fields=%s",
             self.settings.spreadsheet_id,
             snapshot.sheet_name,
             append_range,
             self._column_index_to_a1(start_column_index),
+            start_column_index + 1,
             len(ordered_values),
             ordered_values,
+            self._populated_field_column_diagnostics(values, snapshot),
         )
         try:
             response = self._spreadsheets_values().append(
@@ -219,7 +233,8 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
         if self.is_read_only:
             raise GoogleSheetsReadOnlyError(self._read_only_message(sheet_name))
         snapshot = self._load_snapshot(sheet_name)
-        start_column_index, end_column_index = self._canonical_column_span(snapshot)
+        start_column_index = snapshot.write_start_column_index
+        end_column_index = snapshot.write_end_column_index
         row_range = (
             f"{self._worksheet_range(snapshot.sheet_name)}!"
             f"{self._column_index_to_a1(start_column_index)}{row_number}:{self._column_index_to_a1(end_column_index)}{row_number}"
@@ -379,6 +394,16 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
                 f"Worksheet {sheet_name!r} is empty; the worksheet must contain the canonical ASSETS headers."
             )
         selection = self._select_header_row(sheet_name, raw_rows)
+        canonical_index_by_header = {
+            canonical_header: column_index
+            for canonical_header, column_index in zip(selection.canonical_headers, selection.canonical_indexes)
+        }
+        asset_id_column_index = canonical_index_by_header.get("Asset_ID")
+        if asset_id_column_index is None:
+            raise GoogleSheetsWorksheetError(
+                f"Worksheet {sheet_name!r} header row {selection.header_row_index + 1} is missing required canonical header Asset_ID."
+            )
+        write_end_column_index = max(selection.canonical_indexes)
         records: list[SheetRecord] = []
         scanned_rows = 0
         blank_rows = 0
@@ -397,9 +422,15 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
                 continue
             records.append(SheetRecord(row_number=row_number, values=values))
         LOGGER.debug(
-            "Loaded Google Sheets snapshot for worksheet=%s header_row=%s scanned=%s blank=%s skipped=%s parsed=%s",
+            "Loaded Google Sheets snapshot for worksheet=%s header_row=%s asset_id_column=%s(%s) write_start_column=%s(%s) write_end_column=%s(%s) scanned=%s blank=%s skipped=%s parsed=%s",
             sheet_name,
             selection.header_row_index + 1,
+            self._column_index_to_a1(asset_id_column_index),
+            asset_id_column_index + 1,
+            self._column_index_to_a1(asset_id_column_index),
+            asset_id_column_index + 1,
+            self._column_index_to_a1(write_end_column_index),
+            write_end_column_index + 1,
             scanned_rows,
             blank_rows,
             skipped_rows,
@@ -412,6 +443,10 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
             header_row_number=selection.header_row_index + 1,
             canonical_indexes=selection.canonical_indexes,
             canonical_header_by_column=self._build_canonical_header_by_column(selection),
+            canonical_index_by_header=canonical_index_by_header,
+            asset_id_column_index=asset_id_column_index,
+            write_start_column_index=asset_id_column_index,
+            write_end_column_index=write_end_column_index,
             worksheet_column_count=len(selection.headers),
             rows=tuple(records),
         )
@@ -492,8 +527,14 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
 
     def _row_to_worksheet_values(self, values: RowData, snapshot: WorksheetSnapshot) -> list[Any]:
         worksheet_values = [""] * snapshot.worksheet_column_count
+        raw_category = values.get("Asset_Category")
+        category = raw_category.strip() if isinstance(raw_category, str) else None
+        allowed_category_headers = self._category_headers_by_category.get(category, set())
         for column_index, canonical_header in enumerate(snapshot.canonical_header_by_column):
             if canonical_header is None:
+                continue
+            if canonical_header in self._all_category_headers and canonical_header not in allowed_category_headers:
+                worksheet_values[column_index] = ""
                 continue
             worksheet_values[column_index] = self._serialize_outbound_value(values.get(canonical_header))
         return worksheet_values
@@ -545,19 +586,23 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
         end_column = self._column_index_to_a1(end_column_index)
         return f"{self._worksheet_range(snapshot.sheet_name)}!{start_column}{snapshot.header_row_number}:{end_column}"
 
-    def _canonical_column_span(self, snapshot: WorksheetSnapshot) -> tuple[int, int]:
-        if not snapshot.canonical_indexes:
-            raise GoogleSheetsWorksheetError(
-                f"Worksheet {snapshot.sheet_name!r} did not provide canonical column indexes."
-            )
-        return min(snapshot.canonical_indexes), max(snapshot.canonical_indexes)
-
     def _column_mapping_diagnostics(self, snapshot: WorksheetSnapshot) -> dict[str, str]:
         diagnostics: dict[str, str] = {}
         for column_index, canonical_header in enumerate(snapshot.canonical_header_by_column):
             if canonical_header is None:
                 continue
-            diagnostics[canonical_header] = f"{self._column_index_to_a1(column_index)}({column_index})"
+            diagnostics[canonical_header] = f"{self._column_index_to_a1(column_index)}({column_index + 1})"
+        return diagnostics
+
+    def _populated_field_column_diagnostics(self, values: RowData, snapshot: WorksheetSnapshot) -> dict[str, str]:
+        diagnostics: dict[str, str] = {}
+        for canonical_header, column_index in snapshot.canonical_index_by_header.items():
+            value = values.get(canonical_header)
+            if value in (None, ""):
+                continue
+            diagnostics[canonical_header] = (
+                f"{self._column_index_to_a1(column_index)}({column_index + 1})"
+            )
         return diagnostics
 
     @staticmethod

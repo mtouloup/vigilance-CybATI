@@ -463,6 +463,49 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
         self.assertEqual(sent_values[2], 'Cybersecurity Tool')
         self.assertEqual(sent_values[headers.index('Tool_Type')], 'SIEM (Security Information and Event Management)')
 
+    def test_append_row_anchors_to_asset_id_even_when_category_column_appears_earlier(self) -> None:
+        gateway = GoogleSheetsTableGateway(settings=self.auth_settings, expected_headers=self.mapper.ordered_headers, api_service=Mock())
+        headers = list(self.mapper.ordered_headers)
+        actual_header_row = ['Tool_Type', ''] + headers
+        row_length = len(actual_header_row)
+        asset_id_column = gateway._column_index_to_a1(2)
+        end_column = gateway._column_index_to_a1(row_length - 1)
+
+        snapshot = gateway._build_snapshot(
+            sheet_name='Inventory Assets',
+            sheet_id=12,
+            raw_rows=[
+                ['Decorative groupings'] + [''] * (row_length - 1),
+                actual_header_row,
+            ],
+        )
+        gateway._load_snapshot = Mock(return_value=snapshot)
+        values_resource = Mock()
+        values_resource.append.return_value.execute.return_value = {
+            'updates': {
+                'updatedRange': f"'Inventory Assets'!{asset_id_column}3:{end_column}3",
+                'updatedRows': 1,
+                'updatedColumns': row_length - 2,
+            }
+        }
+        gateway._spreadsheets_values = Mock(return_value=values_resource)
+        gateway._find_appended_row = Mock(return_value=Mock(row_number=3, values={'Asset_ID': 'AST-915'}))
+
+        gateway.append_row('Inventory Assets', {
+            'Asset_ID': 'AST-915',
+            'Asset_Name': 'Anchored by asset id',
+            'Asset_Category': 'Cybersecurity Tool',
+            'Tool_Type': 'SIEM (Security Information and Event Management)',
+        })
+
+        append_kwargs = values_resource.append.call_args.kwargs
+        self.assertEqual(append_kwargs['range'], f"'Inventory Assets'!{asset_id_column}2:{end_column}")
+        sent_values = append_kwargs['body']['values'][0]
+        self.assertEqual(sent_values[0], 'AST-915')
+        self.assertEqual(sent_values[1], 'Anchored by asset id')
+        self.assertEqual(sent_values[2], 'Cybersecurity Tool')
+        self.assertEqual(sent_values[headers.index('Tool_Type')], 'SIEM (Security Information and Event Management)')
+
     def test_aligned_row_round_trip_preserves_separators_and_column_mapping(self) -> None:
         gateway = GoogleSheetsTableGateway(settings=self.auth_settings, expected_headers=self.mapper.ordered_headers, api_service=Mock())
         headers = list(self.mapper.ordered_headers)
@@ -553,6 +596,25 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
             if separator_index < first_canonical_index:
                 continue
             self.assertEqual(sent_values[separator_index - first_canonical_index], '')
+
+    def test_snapshot_exposes_header_row_and_asset_id_anchor_position(self) -> None:
+        gateway = GoogleSheetsTableGateway(settings=self.auth_settings, expected_headers=self.mapper.ordered_headers)
+        headers = list(self.mapper.ordered_headers)
+        actual_header_row = ([''] * 52) + headers
+
+        snapshot = gateway._build_snapshot(
+            sheet_name='Inventory Assets',
+            sheet_id=None,
+            raw_rows=[
+                ['CYBERSECURITY TOOL–SPECIFIC FIELDS'] + [''] * (len(actual_header_row) - 1),
+                actual_header_row,
+            ],
+        )
+
+        self.assertEqual(snapshot.header_row_number, 2)
+        self.assertEqual(snapshot.asset_id_column_index, 52)
+        self.assertEqual(snapshot.write_start_column_index, 52)
+        self.assertEqual(snapshot.write_end_column_index, len(actual_header_row) - 1)
 
     def test_append_row_requires_confirmed_google_api_update_metadata(self) -> None:
         gateway = GoogleSheetsTableGateway(settings=self.auth_settings, expected_headers=self.mapper.ordered_headers, api_service=Mock())
