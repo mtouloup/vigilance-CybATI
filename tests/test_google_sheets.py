@@ -316,13 +316,7 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
         )
         gateway._load_snapshot = Mock(side_effect=[initial_snapshot, appended_snapshot])
         values_resource = Mock()
-        values_resource.append.return_value.execute.return_value = {
-            'updates': {
-                'updatedRange': f"'Inventory Assets'!A4:{end_column}4",
-                'updatedRows': 1,
-                'updatedColumns': row_length,
-            }
-        }
+        values_resource.update.return_value.execute.return_value = {}
         gateway._spreadsheets_values = Mock(return_value=values_resource)
 
         record = gateway.append_row('Inventory Assets', {
@@ -332,9 +326,9 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
             'Tool_Type': 'SIEM (Security Information and Event Management)',
         })
 
-        append_kwargs = values_resource.append.call_args.kwargs
-        self.assertEqual(append_kwargs['range'], f"'Inventory Assets'!A2:{end_column}")
-        sent_values = append_kwargs['body']['values'][0]
+        update_kwargs = values_resource.update.call_args.kwargs
+        self.assertEqual(update_kwargs['range'], f"'Inventory Assets'!A4:{end_column}4")
+        sent_values = update_kwargs['body']['values'][0]
         self.assertEqual(len(sent_values), row_length)
         self.assertEqual(sent_values[0], 'ASSET-003')
         self.assertEqual(sent_values[1], 'Fresh Asset')
@@ -362,13 +356,7 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
         )
         gateway._load_snapshot = Mock(return_value=initial_snapshot)
         values_resource = Mock()
-        values_resource.append.return_value.execute.return_value = {
-            'updates': {
-                'updatedRange': f"'Inventory Assets'!A4:{end_column}4",
-                'updatedRows': 1,
-                'updatedColumns': row_length,
-            }
-        }
+        values_resource.update.return_value.execute.return_value = {}
         gateway._spreadsheets_values = Mock(return_value=values_resource)
         gateway._find_appended_row = Mock(return_value=Mock(row_number=4, values={'Asset_ID': 'AST-777'}))
 
@@ -401,9 +389,9 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
                     **category_values,
                 }
                 gateway.append_row('Inventory Assets', payload)
-                append_kwargs = values_resource.append.call_args.kwargs
-                self.assertEqual(append_kwargs['range'], f"'Inventory Assets'!A2:{end_column}")
-                sent_values = append_kwargs['body']['values'][0]
+                update_kwargs = values_resource.update.call_args.kwargs
+                self.assertEqual(update_kwargs['range'], f"'Inventory Assets'!A4:{end_column}4")
+                sent_values = update_kwargs['body']['values'][0]
                 self.assertEqual(len(sent_values), row_length)
                 self.assertEqual(sent_values[canonical_column_map['Asset_ID']], 'AST-777')
                 self.assertEqual(sent_values[canonical_column_map['Asset_Name']], f'{category} asset')
@@ -437,13 +425,7 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
         )
         gateway._load_snapshot = Mock(return_value=snapshot)
         values_resource = Mock()
-        values_resource.append.return_value.execute.return_value = {
-            'updates': {
-                'updatedRange': f"'Inventory Assets'!{first_canonical_column}3:{end_column}3",
-                'updatedRows': 1,
-                'updatedColumns': len(headers),
-            }
-        }
+        values_resource.update.return_value.execute.return_value = {}
         gateway._spreadsheets_values = Mock(return_value=values_resource)
         gateway._find_appended_row = Mock(return_value=Mock(row_number=3, values={'Asset_ID': 'ASSET-900'}))
 
@@ -454,9 +436,9 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
             'Tool_Type': 'SIEM (Security Information and Event Management)',
         })
 
-        append_kwargs = values_resource.append.call_args.kwargs
-        self.assertEqual(append_kwargs['range'], f"'Inventory Assets'!{first_canonical_column}2:{end_column}")
-        sent_values = append_kwargs['body']['values'][0]
+        update_kwargs = values_resource.update.call_args.kwargs
+        self.assertEqual(update_kwargs['range'], f"'Inventory Assets'!{first_canonical_column}3:{end_column}3")
+        sent_values = update_kwargs['body']['values'][0]
         self.assertEqual(len(sent_values), len(headers))
         self.assertEqual(sent_values[0], 'ASSET-900')
         self.assertEqual(sent_values[1], 'Anchored asset')
@@ -481,13 +463,7 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
         )
         gateway._load_snapshot = Mock(return_value=snapshot)
         values_resource = Mock()
-        values_resource.append.return_value.execute.return_value = {
-            'updates': {
-                'updatedRange': f"'Inventory Assets'!{asset_id_column}3:{end_column}3",
-                'updatedRows': 1,
-                'updatedColumns': row_length - 2,
-            }
-        }
+        values_resource.update.return_value.execute.return_value = {}
         gateway._spreadsheets_values = Mock(return_value=values_resource)
         gateway._find_appended_row = Mock(return_value=Mock(row_number=3, values={'Asset_ID': 'AST-915'}))
 
@@ -498,9 +474,9 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
             'Tool_Type': 'SIEM (Security Information and Event Management)',
         })
 
-        append_kwargs = values_resource.append.call_args.kwargs
-        self.assertEqual(append_kwargs['range'], f"'Inventory Assets'!{asset_id_column}2:{end_column}")
-        sent_values = append_kwargs['body']['values'][0]
+        update_kwargs = values_resource.update.call_args.kwargs
+        self.assertEqual(update_kwargs['range'], f"'Inventory Assets'!{asset_id_column}3:{end_column}3")
+        sent_values = update_kwargs['body']['values'][0]
         self.assertEqual(sent_values[0], 'AST-915')
         self.assertEqual(sent_values[1], 'Anchored by asset id')
         self.assertEqual(sent_values[2], 'Cybersecurity Tool')
@@ -562,13 +538,7 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
         )
         gateway._load_snapshot = Mock(return_value=snapshot)
         values_resource = Mock()
-        values_resource.append.return_value.execute.return_value = {
-            'updates': {
-                'updatedRange': f"'Inventory Assets'!{first_canonical_column}3:{end_column}3",
-                'updatedRows': 1,
-                'updatedColumns': row_length - first_canonical_index,
-            }
-        }
+        values_resource.update.return_value.execute.return_value = {}
         gateway._spreadsheets_values = Mock(return_value=values_resource)
         gateway._find_appended_row = Mock(return_value=Mock(row_number=3, values={'Asset_ID': 'AST-777'}))
 
@@ -580,9 +550,9 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
             'Service_Type': None,
         })
 
-        append_kwargs = values_resource.append.call_args.kwargs
-        self.assertEqual(append_kwargs['range'], f"'Inventory Assets'!{first_canonical_column}2:{end_column}")
-        sent_values = append_kwargs['body']['values'][0]
+        update_kwargs = values_resource.update.call_args.kwargs
+        self.assertEqual(update_kwargs['range'], f"'Inventory Assets'!{first_canonical_column}3:{end_column}3")
+        sent_values = update_kwargs['body']['values'][0]
         self.assertEqual(sent_values[0], 'AST-777')
         self.assertEqual(sent_values[1], 'Cyber tool')
         self.assertEqual(sent_values[2], 'Cybersecurity Tool')
@@ -616,20 +586,19 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
         self.assertEqual(snapshot.write_start_column_index, 52)
         self.assertEqual(snapshot.write_end_column_index, len(actual_header_row) - 1)
 
-    def test_append_row_requires_confirmed_google_api_update_metadata(self) -> None:
+    def test_find_next_empty_data_row_below_header(self) -> None:
         gateway = GoogleSheetsTableGateway(settings=self.auth_settings, expected_headers=self.mapper.ordered_headers, api_service=Mock())
         snapshot = gateway._build_snapshot(
             sheet_name='Inventory Assets',
             sheet_id=12,
-            raw_rows=[list(self.mapper.ordered_headers)],
+            raw_rows=[
+                ['Decorative groupings'] + [''] * (len(self.mapper.ordered_headers) - 1),
+                list(self.mapper.ordered_headers),
+                ['AST-001', 'Threat Radar', 'Cybersecurity Tool'] + [''] * (len(self.mapper.ordered_headers) - 3),
+                ['AST-002', 'Platform Hub', 'Platform / Service'] + [''] * (len(self.mapper.ordered_headers) - 3),
+            ],
         )
-        gateway._load_snapshot = Mock(return_value=snapshot)
-        values_resource = Mock()
-        values_resource.append.return_value.execute.return_value = {'updates': {'updatedRows': 0}}
-        gateway._spreadsheets_values = Mock(return_value=values_resource)
-
-        with self.assertRaisesRegex(GoogleSheetsWorksheetError, 'did not confirm a single appended row'):
-            gateway.append_row('Inventory Assets', {'Asset_ID': 'ASSET-003'})
+        self.assertEqual(gateway._find_next_empty_data_row(snapshot), 5)
 
     @staticmethod
     def _header_with_category_separators(
