@@ -165,14 +165,27 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
         if self.is_read_only:
             raise GoogleSheetsReadOnlyError(self._read_only_message(sheet_name))
         snapshot = self._load_snapshot(sheet_name)
-        append_range = self._append_range(snapshot)
-        ordered_values = self._row_to_worksheet_values(values, snapshot)
+        start_column_index, end_column_index = self._canonical_column_span(snapshot)
+        append_range = self._append_range(snapshot, start_column_index, end_column_index)
+        ordered_values = self._row_to_aligned_worksheet_values(
+            values,
+            snapshot,
+            start_column_index=start_column_index,
+            end_column_index=end_column_index,
+        )
         body = {"values": [ordered_values]}
+        LOGGER.debug(
+            "Google Sheets append column mapping worksheet=%s columns=%s",
+            snapshot.sheet_name,
+            self._column_mapping_diagnostics(snapshot),
+        )
         LOGGER.info(
-            "Appending asset row to Google Sheet spreadsheet=%s worksheet=%s range=%s values=%s",
+            "Appending asset row to Google Sheet spreadsheet=%s worksheet=%s range=%s first_column=%s payload_length=%s values=%s",
             self.settings.spreadsheet_id,
             snapshot.sheet_name,
             append_range,
+            self._column_index_to_a1(start_column_index),
+            len(ordered_values),
             ordered_values,
         )
         try:
@@ -206,12 +219,23 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
         if self.is_read_only:
             raise GoogleSheetsReadOnlyError(self._read_only_message(sheet_name))
         snapshot = self._load_snapshot(sheet_name)
+        start_column_index, end_column_index = self._canonical_column_span(snapshot)
+        row_range = (
+            f"{self._worksheet_range(snapshot.sheet_name)}!"
+            f"{self._column_index_to_a1(start_column_index)}{row_number}:{self._column_index_to_a1(end_column_index)}{row_number}"
+        )
+        ordered_values = self._row_to_aligned_worksheet_values(
+            values,
+            snapshot,
+            start_column_index=start_column_index,
+            end_column_index=end_column_index,
+        )
         try:
             self._spreadsheets_values().update(
                 spreadsheetId=self.settings.spreadsheet_id,
-                range=f"{snapshot.sheet_name}!{row_number}:{row_number}",
+                range=row_range,
                 valueInputOption="USER_ENTERED",
-                body={"values": [self._row_to_ordered_values(values, snapshot.headers)]},
+                body={"values": [ordered_values]},
             ).execute()
         except HttpError as exc:
             message = _format_google_api_error(
@@ -474,6 +498,17 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
             worksheet_values[column_index] = self._serialize_outbound_value(values.get(canonical_header))
         return worksheet_values
 
+    def _row_to_aligned_worksheet_values(
+        self,
+        values: RowData,
+        snapshot: WorksheetSnapshot,
+        *,
+        start_column_index: int,
+        end_column_index: int,
+    ) -> list[Any]:
+        worksheet_values = self._row_to_worksheet_values(values, snapshot)
+        return worksheet_values[start_column_index : end_column_index + 1]
+
     def _build_canonical_header_by_column(self, selection: HeaderSelection) -> tuple[str | None, ...]:
         header_by_normalized_key = {
             self._normalize_header_key(header): header for header in selection.canonical_headers
@@ -505,9 +540,25 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
     def _worksheet_range(self, sheet_name: str) -> str:
         return f"'{sheet_name}'"
 
-    def _append_range(self, snapshot: WorksheetSnapshot) -> str:
-        end_column = self._column_index_to_a1(snapshot.worksheet_column_count - 1)
-        return f"{self._worksheet_range(snapshot.sheet_name)}!A{snapshot.header_row_number}:{end_column}"
+    def _append_range(self, snapshot: WorksheetSnapshot, start_column_index: int, end_column_index: int) -> str:
+        start_column = self._column_index_to_a1(start_column_index)
+        end_column = self._column_index_to_a1(end_column_index)
+        return f"{self._worksheet_range(snapshot.sheet_name)}!{start_column}{snapshot.header_row_number}:{end_column}"
+
+    def _canonical_column_span(self, snapshot: WorksheetSnapshot) -> tuple[int, int]:
+        if not snapshot.canonical_indexes:
+            raise GoogleSheetsWorksheetError(
+                f"Worksheet {snapshot.sheet_name!r} did not provide canonical column indexes."
+            )
+        return min(snapshot.canonical_indexes), max(snapshot.canonical_indexes)
+
+    def _column_mapping_diagnostics(self, snapshot: WorksheetSnapshot) -> dict[str, str]:
+        diagnostics: dict[str, str] = {}
+        for column_index, canonical_header in enumerate(snapshot.canonical_header_by_column):
+            if canonical_header is None:
+                continue
+            diagnostics[canonical_header] = f"{self._column_index_to_a1(column_index)}({column_index})"
+        return diagnostics
 
     @staticmethod
     def _column_index_to_a1(column_index: int) -> str:
