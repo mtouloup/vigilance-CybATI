@@ -2,140 +2,86 @@
 
 VIGILANCE T2.3 Cybersecurity Asset & Technology Inventory service.
 
-This Flask backend exposes the canonical inventory API defined by `docs/assets-schema.md` and `schema/assets_schema.json`, using Google Sheets as the storage backend for the `ASSETS` worksheet only. The spreadsheet remains a storage implementation detail behind the repository and service layers.
+This Flask backend exposes the canonical inventory API defined by `docs/assets-schema.md` and `schema/assets_schema.json`, while keeping spreadsheet persistence behind repository adapters.
 
-## Google Sheets runtime modes
+## Storage backends
 
-The backend now supports two explicit runtime modes:
+Select backend at runtime with:
 
-1. **Authenticated read/write mode** (default and recommended)
-   - uses the Google Sheets API
-   - authenticates with a Google service account
-   - enables full CRUD support for the `ASSETS` worksheet
-   - powers `POST`, `PATCH`, `PUT`, and `DELETE`
+- `VIGILANCE_STORAGE_BACKEND=google_sheets` (default)
+- `VIGILANCE_STORAGE_BACKEND=sharepoint`
 
-2. **Explicit public read-only mode**
-   - uses Google Sheets' unauthenticated public CSV export endpoint
-   - keeps `GET` endpoints working without Google credentials
-   - disables all mutation endpoints
-   - is enabled only when `VIGILANCE_GOOGLE_READ_ONLY_PUBLIC=true`
-
-At startup the app validates connectivity and logs whether it is running in `authenticated-read-write` or `public-read-only` mode.
+The domain model, validators, services, and API contracts are unchanged across backends.
 
 ## Canonical model
 
-The canonical asset model lives in:
+Canonical asset schema and vocabulary files:
 
 - `docs/assets-schema.md`
 - `schema/assets_schema.json`
 
-Important implementation rules:
+The backend detects the canonical header row in the `ASSETS` worksheet, respects the decorative grouping row above it, writes aligned rows beginning at `Asset_ID`, preserves separator columns, and finds the next empty data row explicitly.
 
-- one row in the `ASSETS` worksheet represents exactly one asset
-- `Asset_ID` is the stable unique API identifier
-- spreadsheet columns are mapped by header name
-- the app validates records against the canonical schema
-- only the configured `ASSETS` worksheet is used for inventory data
+---
 
-## Service-account setup
+## Google Sheets backend
 
-To enable authenticated writes:
+### Required environment variables
 
-1. Create or choose a Google Cloud project.
-2. Enable the **Google Sheets API** for that project.
-3. Create a **service account**.
-4. Generate a JSON key for the service account.
-5. Share the target Google Sheet with the service account's `client_email`.
-   - Give it **Editor** access for full CRUD support.
-6. Set `VIGILANCE_GOOGLE_SPREADSHEET_ID` to the workbook ID.
-7. Provide credentials through exactly one of:
-   - `VIGILANCE_GOOGLE_SERVICE_ACCOUNT_FILE`
-   - `VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON`
-
-If the service account is not shared on the sheet, authenticated startup will fail even if the credentials are otherwise valid.
-
-## Environment variables
-
-The service reads runtime configuration from environment variables prefixed with `VIGILANCE_`.
-
-### Required
-
+- `VIGILANCE_STORAGE_BACKEND=google_sheets`
 - `VIGILANCE_GOOGLE_SPREADSHEET_ID`
-  - the Google Spreadsheet ID
 
-### Required for authenticated read/write mode
-
-Provide exactly one:
+For authenticated read/write (recommended), set exactly one:
 
 - `VIGILANCE_GOOGLE_SERVICE_ACCOUNT_FILE`
-  - path to a Google service-account JSON file inside the runtime environment
 - `VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON`
-  - the raw JSON document as an environment variable value
 
-### Optional
+Optional:
 
-- `VIGILANCE_GOOGLE_WORKSHEET_NAME`
-  - defaults to `ASSETS`
-  - the backend still only supports the canonical asset worksheet
-- `VIGILANCE_GOOGLE_READ_ONLY_PUBLIC`
-  - default `false`
-  - set to `true` only if you intentionally want public-sheet read-only fallback
-- `VIGILANCE_LOG_LEVEL`
-  - default `INFO`
-- `VIGILANCE_PORT`
-  - default local port override
-- `PORT`
-  - default container/runtime port override
-- `VIGILANCE_DEBUG` or `FLASK_DEBUG`
-  - enable Flask debug mode locally
-- `GUNICORN_WORKERS`
-  - default `2` in Docker
-- `GUNICORN_THREADS`
-  - default `4` in Docker
+- `VIGILANCE_GOOGLE_WORKSHEET_NAME` (default `ASSETS`)
+- `VIGILANCE_GOOGLE_READ_ONLY_PUBLIC` (default `false`)
 
-## CRUD behavior by mode
+### One-time setup
 
-### Authenticated read/write mode
+1. Create/select a Google Cloud project.
+2. Enable Google Sheets API.
+3. Create a service account and key JSON.
+4. Share the target spreadsheet with service-account `client_email`.
 
-When credentials are configured and the service account has access to the spreadsheet:
+---
 
-- `GET /assets`
-- `GET /assets/<asset_id>`
-- `GET /assets/quality`
-- `GET /vocabularies`
-- `GET /vocabularies/<name>`
-- `GET /schema/assets`
-- `GET /schema/assets/<category>`
-- `POST /assets`
-- `PATCH /assets/<asset_id>`
-- `PUT /assets/<asset_id>`
-- `DELETE /assets/<asset_id>`
+## SharePoint backend (Microsoft Graph)
 
-all operate against the Google Sheets `ASSETS` worksheet.
+### Required environment variables
 
-### Explicit public read-only mode
+- `VIGILANCE_STORAGE_BACKEND=sharepoint`
+- `VIGILANCE_SHAREPOINT_TENANT_ID`
+- `VIGILANCE_SHAREPOINT_CLIENT_ID`
+- `VIGILANCE_SHAREPOINT_CLIENT_SECRET` (or adapt implementation for certificate flow)
+- one of:
+  - `VIGILANCE_SHAREPOINT_SITE_ID`, or
+  - `VIGILANCE_SHAREPOINT_SITE_URL`
+- optionally `VIGILANCE_SHAREPOINT_DRIVE_ID` (auto-resolved if omitted)
+- one of:
+  - `VIGILANCE_SHAREPOINT_ITEM_ID`, or
+  - `VIGILANCE_SHAREPOINT_WORKBOOK_PATH`
+- optional `VIGILANCE_SHAREPOINT_WORKSHEET_NAME` (default `ASSETS`)
 
-When `VIGILANCE_GOOGLE_READ_ONLY_PUBLIC=true` is set:
+### One-time Azure/SharePoint setup
 
-- all `GET` endpoints remain available
-- `POST`, `PATCH`, `PUT`, and `DELETE` return a structured read-only error
+1. Register an app in Microsoft Entra ID.
+2. Create a client secret for the app registration.
+3. Grant **application** Microsoft Graph permissions (minimum typically includes `Sites.ReadWrite.All` and `Files.ReadWrite.All`) and grant admin consent.
+4. Ensure the app has access to the target SharePoint site/document library containing the workbook.
+5. Capture tenant/client IDs, and site/workbook identifiers (or workbook path).
 
-This fallback exists only for intentionally public deployments and is not enabled automatically.
+The backend authenticates via OAuth2 client-credentials against Microsoft Graph, then reads/writes the Excel workbook through Graph workbook endpoints.
 
-## Spreadsheet expectations
+---
 
-The configured workbook may contain multiple sheets, but this application reads and writes only the worksheet configured by `VIGILANCE_GOOGLE_WORKSHEET_NAME`, which defaults to `ASSETS`.
+## Run locally (`python app.py`)
 
-Startup validates that:
-
-- a spreadsheet ID is configured
-- the target worksheet exists
-- the worksheet contains the canonical headers from `schema/assets_schema.json`
-- spreadsheet access works in the configured runtime mode
-
-## Run locally with `python app.py`
-
-Create and activate a Python 3.11+ virtual environment, then install dependencies:
+Install:
 
 ```bash
 python -m venv .venv
@@ -144,84 +90,69 @@ pip install --upgrade pip
 pip install -e .
 ```
 
-### Option A: credentials file path
+### Local run (Google Sheets)
 
 ```bash
+export VIGILANCE_STORAGE_BACKEND=google_sheets
 export VIGILANCE_GOOGLE_SPREADSHEET_ID=your_spreadsheet_id
 export VIGILANCE_GOOGLE_WORKSHEET_NAME=ASSETS
 export VIGILANCE_GOOGLE_SERVICE_ACCOUNT_FILE=$PWD/secrets/google-service-account.json
-export VIGILANCE_PORT=8000
-export VIGILANCE_DEBUG=true
 python app.py
 ```
 
-### Option B: credentials JSON in an environment variable
+### Local run (SharePoint)
 
 ```bash
-export VIGILANCE_GOOGLE_SPREADSHEET_ID=your_spreadsheet_id
-export VIGILANCE_GOOGLE_WORKSHEET_NAME=ASSETS
-export VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON="$(cat ./secrets/google-service-account.json)"
+export VIGILANCE_STORAGE_BACKEND=sharepoint
+export VIGILANCE_SHAREPOINT_TENANT_ID=your_tenant_id
+export VIGILANCE_SHAREPOINT_CLIENT_ID=your_client_id
+export VIGILANCE_SHAREPOINT_CLIENT_SECRET=your_client_secret
+export VIGILANCE_SHAREPOINT_SITE_ID=your_site_id
+export VIGILANCE_SHAREPOINT_ITEM_ID=your_workbook_item_id
+export VIGILANCE_SHAREPOINT_WORKSHEET_NAME=ASSETS
 python app.py
 ```
 
-### Optional explicit public read-only startup
+## Docker
 
-```bash
-export VIGILANCE_GOOGLE_SPREADSHEET_ID=your_public_spreadsheet_id
-export VIGILANCE_GOOGLE_READ_ONLY_PUBLIC=true
-python app.py
-```
-
-Then open:
-
-- API root: `http://localhost:8000/`
-- assets endpoint: `http://localhost:8000/assets`
-- Swagger UI: `http://localhost:8000/docs`
-- OpenAPI JSON: `http://localhost:8000/openapi.json`
-
-## Run with Docker
-
-Build the image:
+Build:
 
 ```bash
 docker build -t vigilance-assets .
 ```
 
-### Docker with mounted service-account file
+### Docker run (Google Sheets)
 
 ```bash
 docker run --rm -p 8000:8000 \
+  -e VIGILANCE_STORAGE_BACKEND=google_sheets \
   -e VIGILANCE_GOOGLE_SPREADSHEET_ID=your_spreadsheet_id \
-  -e VIGILANCE_GOOGLE_WORKSHEET_NAME=ASSETS \
-  -e VIGILANCE_GOOGLE_SERVICE_ACCOUNT_FILE=/run/secrets/google-service-account.json \
-  -v "$PWD/secrets/google-service-account.json:/run/secrets/google-service-account.json:ro" \
+  -e VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON="$(cat ./secrets/google-service-account.json)" \
   vigilance-assets
 ```
 
-### Docker with credentials JSON env var
+### Docker run (SharePoint)
 
 ```bash
 docker run --rm -p 8000:8000 \
-  -e VIGILANCE_GOOGLE_SPREADSHEET_ID=your_spreadsheet_id \
-  -e VIGILANCE_GOOGLE_WORKSHEET_NAME=ASSETS \
-  -e VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON="$(cat ./secrets/google-service-account.json)" \
+  -e VIGILANCE_STORAGE_BACKEND=sharepoint \
+  -e VIGILANCE_SHAREPOINT_TENANT_ID=your_tenant_id \
+  -e VIGILANCE_SHAREPOINT_CLIENT_ID=your_client_id \
+  -e VIGILANCE_SHAREPOINT_CLIENT_SECRET=your_client_secret \
+  -e VIGILANCE_SHAREPOINT_SITE_ID=your_site_id \
+  -e VIGILANCE_SHAREPOINT_ITEM_ID=your_workbook_item_id \
   vigilance-assets
 ```
 
 ### Compose
 
-Set the relevant environment variables, then run:
+Set environment variables for your selected backend, then:
 
 ```bash
 docker compose up --build
 ```
 
-## Swagger UI
+## API docs
 
-Swagger UI is served by the app at:
-
-- `http://localhost:8000/docs`
-
-The OpenAPI document is available at:
-
-- `http://localhost:8000/openapi.json`
+- Swagger UI: `http://localhost:8000/docs`
+- OpenAPI JSON: `http://localhost:8000/openapi.json`
