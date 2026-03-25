@@ -178,7 +178,8 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
         snapshot = self._load_snapshot(sheet_name)
         start_column_index = snapshot.write_start_column_index
         end_column_index = snapshot.write_end_column_index
-        append_range = self._append_range(snapshot, start_column_index, end_column_index)
+        next_empty_row = self._find_next_empty_data_row(snapshot)
+        write_range = self._row_range(snapshot, row_number=next_empty_row)
         ordered_values = self._row_to_aligned_worksheet_values(
             values,
             snapshot,
@@ -187,47 +188,40 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
         )
         body = {"values": [ordered_values]}
         LOGGER.debug(
-            "Google Sheets append column mapping worksheet=%s columns=%s",
+            "Google Sheets write column mapping worksheet=%s columns=%s",
             snapshot.sheet_name,
             self._column_mapping_diagnostics(snapshot),
         )
         LOGGER.info(
-            "Appending asset row to Google Sheet spreadsheet=%s worksheet=%s range=%s start_column=%s(%s) payload_width=%s values=%s populated_fields=%s",
+            "Writing asset row to Google Sheet spreadsheet=%s worksheet=%s header_row=%s asset_id_column=%s(%s) last_canonical_column=%s(%s) next_empty_row=%s range=%s payload_width=%s values=%s populated_fields=%s",
             self.settings.spreadsheet_id,
             snapshot.sheet_name,
-            append_range,
+            snapshot.header_row_number,
             self._column_index_to_a1(start_column_index),
             start_column_index + 1,
+            self._column_index_to_a1(end_column_index),
+            end_column_index + 1,
+            next_empty_row,
+            write_range,
             len(ordered_values),
             ordered_values,
             self._populated_field_column_diagnostics(values, snapshot),
         )
         try:
-            response = self._spreadsheets_values().append(
+            self._spreadsheets_values().update(
                 spreadsheetId=self.settings.spreadsheet_id,
-                range=append_range,
+                range=write_range,
                 valueInputOption="USER_ENTERED",
-                insertDataOption="INSERT_ROWS",
-                includeValuesInResponse=True,
                 body=body,
             ).execute()
         except HttpError as exc:
             message = _format_google_api_error(
-                "Failed to append a row through the Google Sheets API.",
+                f"Failed to write row {next_empty_row} through the Google Sheets API.",
                 exc,
             )
             LOGGER.exception(message)
             raise GoogleSheetsConnectivityError(message) from exc
-        LOGGER.info(
-            "Google Sheets append response spreadsheet=%s worksheet=%s range=%s updates=%s",
-            self.settings.spreadsheet_id,
-            snapshot.sheet_name,
-            append_range,
-            response,
-        )
-        appended_row_number = self._extract_appended_row_number(response)
-        self._validate_append_response(response, snapshot.sheet_name)
-        return self._find_appended_row(snapshot.sheet_name, values.get("Asset_ID"), appended_row_number=appended_row_number)
+        return self._find_appended_row(snapshot.sheet_name, values.get("Asset_ID"), appended_row_number=next_empty_row)
 
     def update_row(self, sheet_name: str, row_number: int, values: RowData) -> SheetRecord:
         if self.is_read_only:
@@ -586,6 +580,21 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
         end_column = self._column_index_to_a1(end_column_index)
         return f"{self._worksheet_range(snapshot.sheet_name)}!{start_column}{snapshot.header_row_number}:{end_column}"
 
+    def _row_range(self, snapshot: WorksheetSnapshot, *, row_number: int) -> str:
+        return (
+            f"{self._worksheet_range(snapshot.sheet_name)}!"
+            f"{self._column_index_to_a1(snapshot.write_start_column_index)}{row_number}:"
+            f"{self._column_index_to_a1(snapshot.write_end_column_index)}{row_number}"
+        )
+
+    def _find_next_empty_data_row(self, snapshot: WorksheetSnapshot) -> int:
+        first_data_row = snapshot.header_row_number + 1
+        occupied_rows = {record.row_number for record in snapshot.rows}
+        next_row = first_data_row
+        while next_row in occupied_rows:
+            next_row += 1
+        return next_row
+
     def _column_mapping_diagnostics(self, snapshot: WorksheetSnapshot) -> dict[str, str]:
         diagnostics: dict[str, str] = {}
         for column_index, canonical_header in enumerate(snapshot.canonical_header_by_column):
@@ -615,36 +624,6 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
             current, remainder = divmod(current - 1, 26)
             result = chr(65 + remainder) + result
         return result
-
-    def _validate_append_response(self, response: dict[str, Any], sheet_name: str) -> None:
-        updates = response.get("updates")
-        if not isinstance(updates, dict):
-            raise GoogleSheetsWorksheetError(
-                f"Google Sheets append response for worksheet {sheet_name!r} did not include update metadata."
-            )
-        updated_rows = updates.get("updatedRows")
-        updated_range = updates.get("updatedRange")
-        if updated_rows != 1 or not updated_range:
-            raise GoogleSheetsWorksheetError(
-                f"Google Sheets append response for worksheet {sheet_name!r} did not confirm a single appended row: {updates!r}."
-            )
-
-    @staticmethod
-    def _extract_appended_row_number(response: dict[str, Any]) -> int | None:
-        updates = response.get("updates")
-        if not isinstance(updates, dict):
-            return None
-        updated_range = updates.get("updatedRange")
-        if not isinstance(updated_range, str):
-            return None
-        match = re.search(r"![A-Z]+(\d+):[A-Z]+(\d+)$", updated_range)
-        if match is None:
-            return None
-        start_row = int(match.group(1))
-        end_row = int(match.group(2))
-        if start_row != end_row:
-            return None
-        return start_row
 
     def _create_api_service(self) -> Any:
         credentials = _load_service_account_credentials(self.settings)
