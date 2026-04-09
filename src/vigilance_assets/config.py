@@ -10,6 +10,7 @@ DEFAULT_ASSETS_WORKSHEET = "ASSETS"
 DEFAULT_STORAGE_BACKEND = "google_sheets"
 DEFAULT_AUTH_MODE = "none"
 DEFAULT_GRAPH_SCOPES = "https://graph.microsoft.com/.default"
+DEFAULT_API_SCOPES = ""
 DEFAULT_AUTH_PUBLIC_PATHS = ("/docs", "/openapi.json", "/swagger.json", "/health", "/swaggerui")
 DEFAULT_SWAGGER_USE_OAUTH = False
 
@@ -103,6 +104,9 @@ class AppRuntimeSettings:
     swagger_entra_tenant_id: str | None = None
     swagger_entra_client_id: str | None = None
     swagger_entra_api_scope: str | None = None
+    swagger_oauth_authorization_url: str | None = None
+    swagger_oauth_token_url: str | None = None
+    swagger_oauth_scopes: tuple[str, ...] = ()
 
     def validate(self) -> None:
         if self.storage_backend == "google_sheets":
@@ -165,6 +169,9 @@ def load_runtime_settings(env: Mapping[str, str] | None = None) -> AppRuntimeSet
         swagger_entra_tenant_id=_read_optional_str(values, "ENTRA_TENANT_ID"),
         swagger_entra_client_id=_read_optional_str(values, "ENTRA_CLIENT_ID"),
         swagger_entra_api_scope=_read_optional_str(values, "ENTRA_API_SCOPE"),
+        swagger_oauth_authorization_url=_read_optional_str(values, "ENTRA_AUTHORIZATION_URL"),
+        swagger_oauth_token_url=_read_optional_str(values, "ENTRA_TOKEN_URL"),
+        swagger_oauth_scopes=_read_api_scopes(values),
     )
     settings.validate()
     return settings
@@ -205,3 +212,11 @@ def _read_auth_public_paths(env: Mapping[str, str]) -> tuple[str, ...]:
         return DEFAULT_AUTH_PUBLIC_PATHS
     paths = tuple(part.strip() for part in raw_value.split(",") if part.strip())
     return paths or DEFAULT_AUTH_PUBLIC_PATHS
+
+
+def _read_api_scopes(env: Mapping[str, str]) -> tuple[str, ...]:
+    raw_value = _read_optional_str(env, "ENTRA_API_SCOPE")
+    if raw_value is None:
+        raw_value = _read_str(env, "ENTRA_API_SCOPES", default=DEFAULT_API_SCOPES)
+    scopes = tuple(part.strip() for part in raw_value.replace(",", " ").split() if part.strip())
+    return scopes

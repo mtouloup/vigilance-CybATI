@@ -5,8 +5,10 @@ from unittest.mock import Mock, patch
 
 from flask import Flask, g
 
-from vigilance_assets.auth import AuthContext, AuthenticationError, DownstreamTokenError, EntraOboTokenBroker, RequestScopedGraphTokenProvider, configure_auth
+from vigilance_assets.auth import configure_auth
 from vigilance_assets.config import AppRuntimeSettings, EntraOboSettings, GoogleSheetsSettings, SharePointSettings
+from vigilance_assets.jwt_validation import AuthContext, AuthenticationError
+from vigilance_assets.token_acquisition import DownstreamTokenError, EntraOboTokenBroker, RequestScopedGraphTokenProvider
 
 
 class AuthLayerTests(unittest.TestCase):
@@ -98,9 +100,9 @@ class AuthLayerTests(unittest.TestCase):
         self.assertEqual(client.get('/docs/swagger-ui.css').status_code, 200)
         self.assertEqual(client.get('/docs-private').status_code, 401)
 
-    @patch('vigilance_assets.auth.msal.ConfidentialClientApplication')
-    def test_obo_token_broker_uses_on_behalf_of_flow(self, msal_app_cls: Mock) -> None:
-        app_instance = msal_app_cls.return_value
+    @patch('vigilance_assets.token_acquisition.msal', create=True)
+    def test_obo_token_broker_uses_on_behalf_of_flow(self, msal_module: Mock) -> None:
+        app_instance = msal_module.ConfidentialClientApplication.return_value
         app_instance.acquire_token_on_behalf_of.return_value = {'access_token': 'graph-token'}
         broker = EntraOboTokenBroker(self._entra_settings())
 

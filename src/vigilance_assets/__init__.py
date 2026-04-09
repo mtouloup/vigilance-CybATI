@@ -1,7 +1,7 @@
 """VIGILANCE asset inventory service package."""
 
 from .api import create_app
-from .auth import AuthContext, AuthenticationError, DownstreamTokenError, EntraJwtValidator, EntraOboTokenBroker
+from .jwt_validation import AuthContext, AuthenticationError, EntraJwtValidator
 from .config import (
     AppRuntimeSettings,
     ConfigurationError,
@@ -49,6 +49,7 @@ from .repository import (
 )
 from .runtime import create_repository_from_settings, create_runtime_app
 from .sharepoint import SharePointConfigurationError, SharePointConnectivityError, SharePointTableGateway, SharePointWorksheetError
+from .token_acquisition import DownstreamTokenError, EntraOboTokenBroker
 from .schema import AssetSchemaCatalog, load_schema_catalog
 from .service import AssetService
 from .spreadsheet import ASSETS_SHEET_NAME, AssetSpreadsheetMapper, SheetRecord, SpreadsheetBackendError, SpreadsheetTableGateway

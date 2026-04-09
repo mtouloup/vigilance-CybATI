@@ -1,14 +1,14 @@
 from __future__ import annotations
 
 import logging
-import re
 
-from .auth import EntraOboTokenBroker, RequestScopedGraphTokenProvider, configure_auth
+from .auth import configure_auth
 from .config import AppRuntimeSettings, load_runtime_settings
 from .google_sheets import build_google_sheets_gateway
 from .repository import SpreadsheetAssetRepository
 from .sharepoint import build_sharepoint_gateway
 from .spreadsheet import AssetSpreadsheetMapper
+from .token_acquisition import EntraOboTokenBroker, RequestScopedGraphTokenProvider
 
 
 LOGGER = logging.getLogger(__name__)
@@ -75,7 +75,10 @@ def create_runtime_app():
     app.config["SWAGGER_USE_OAUTH"] = settings.swagger_use_oauth
     app.config["SWAGGER_OAUTH_TENANT_ID"] = settings.swagger_entra_tenant_id
     app.config["SWAGGER_OAUTH_CLIENT_ID"] = settings.swagger_entra_client_id
-    app.config["SWAGGER_OAUTH_SCOPES"] = tuple(scope for scope in re.split(r"[\s,]+", settings.swagger_entra_api_scope or "") if scope)
+    app.config["SWAGGER_OAUTH_API_SCOPE"] = settings.swagger_entra_api_scope
+    app.config["SWAGGER_OAUTH_SCOPES"] = settings.swagger_oauth_scopes
+    app.config["SWAGGER_OAUTH_AUTHORIZATION_URL"] = settings.swagger_oauth_authorization_url
+    app.config["SWAGGER_OAUTH_TOKEN_URL"] = settings.swagger_oauth_token_url
 
     LOGGER.info(
         "Startup mode: storage_backend=%s auth_mode=%s sharepoint_worksheet=%s",

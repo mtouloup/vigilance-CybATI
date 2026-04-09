@@ -13,7 +13,8 @@ from vigilance_assets import (
     build_asset_record,
     create_app,
 )
-from vigilance_assets.auth import AuthContext, configure_auth
+from vigilance_assets.auth import configure_auth
+from vigilance_assets.jwt_validation import AuthContext
 from tests.fixtures import asset_payload
 
 
@@ -114,6 +115,27 @@ class ApiAuthTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()['openapi'], '3.0.3')
         validator.validate.assert_not_called()
+
+    def test_openapi_includes_oauth2_authorization_code_scheme_for_swagger_login(self):
+        client, _ = self._build_client()
+        app = client.application
+        app.config['SWAGGER_USE_OAUTH'] = True
+        app.config['SWAGGER_OAUTH_TENANT_ID'] = 'tenant-id'
+        app.config['SWAGGER_OAUTH_CLIENT_ID'] = 'client-id'
+        app.config['SWAGGER_OAUTH_SCOPES'] = ('api://asset-api/access_as_user',)
+        app.config['SWAGGER_OAUTH_AUTHORIZATION_URL'] = 'https://login.microsoftonline.com/tenant-id/oauth2/v2.0/authorize'
+        app.config['SWAGGER_OAUTH_TOKEN_URL'] = 'https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token'
+
+        response = client.get('/openapi.json')
+
+        self.assertEqual(response.status_code, 200)
+        document = response.get_json()
+        self.assertIn('entraOAuth2', document['components']['securitySchemes'])
+        scheme = document['components']['securitySchemes']['entraOAuth2']
+        self.assertEqual(scheme['type'], 'oauth2')
+        self.assertIn('authorizationCode', scheme['flows'])
+        assets_get = document['paths']['/assets']['get']
+        self.assertEqual(assets_get['security'], [{'entraOAuth2': ['api://asset-api/access_as_user']}])
 
     def test_allows_authenticated_mutation(self):
         client, validator = self._build_client()

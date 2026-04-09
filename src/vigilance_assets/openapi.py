@@ -67,8 +67,9 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
     asset_schema_name = 'AssetPayload'
     patch_schema_name = 'AssetPatchPayload'
 
-    security_schemes = _security_schemes(app)
-    secured_operation = {'security': [{'bearerAuth': []}]}
+    oauth_config = _swagger_oauth_ui_config(app)
+    security_schemes = _security_schemes(app, oauth_config)
+    secured_operation = {'security': _secured_operation_security(oauth_config)}
     return {
         'openapi': '3.0.3',
         'info': {
@@ -77,7 +78,7 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
             'description': 'Blueprint-organized Flask API over the canonical VIGILANCE asset schema.',
         },
         'servers': [{'url': server_url}],
-        'security': [{'bearerAuth': []}],
+        'security': _secured_operation_security(oauth_config),
         'tags': [
             {'name': 'Assets', 'description': 'CRUD, search, pagination, and quality reporting for assets.'},
             {'name': 'Vocabularies', 'description': 'Controlled vocabulary discovery endpoints.'},
@@ -190,9 +191,14 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
     }
 
 
-def _security_schemes(app: Any) -> dict[str, Any]:
+def _secured_operation_security(oauth_config: dict[str, Any]) -> list[dict[str, Any]]:
+    if oauth_config["enabled"]:
+        return [{"entraOAuth2": oauth_config["scopes_list"]}]
+    return [{"bearerAuth": []}]
+
+
+def _security_schemes(app: Any, oauth_config: dict[str, Any]) -> dict[str, Any]:
     schemes: dict[str, Any] = {'bearerAuth': {'type': 'http', 'scheme': 'bearer', 'bearerFormat': 'JWT'}}
-    oauth_config = _swagger_oauth_ui_config(app)
     if oauth_config["enabled"]:
         schemes['entraOAuth2'] = {
             'type': 'oauth2',
@@ -212,18 +218,22 @@ def _swagger_oauth_ui_config(app: Any) -> dict[str, Any]:
     tenant_id = str(app.config.get('SWAGGER_OAUTH_TENANT_ID') or '').strip()
     client_id = str(app.config.get('SWAGGER_OAUTH_CLIENT_ID') or '').strip()
     scopes = [scope for scope in app.config.get('SWAGGER_OAUTH_SCOPES', ()) if isinstance(scope, str) and scope.strip()]
-    if not (enabled and tenant_id and client_id and scopes):
+    authorization_url = str(app.config.get('SWAGGER_OAUTH_AUTHORIZATION_URL') or '').strip()
+    token_url = str(app.config.get('SWAGGER_OAUTH_TOKEN_URL') or '').strip()
+    if not authorization_url or not token_url:
+        authority_root = f'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0'
+        authorization_url = authorization_url or f'{authority_root}/authorize'
+        token_url = token_url or f'{authority_root}/token'
+    if not (enabled and tenant_id and client_id and scopes and authorization_url and token_url):
         return {'enabled': False}
-
-    authority_root = f'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0'
     return {
         'enabled': True,
         'tenant_id': tenant_id,
         'client_id': client_id,
         'scopes': ' '.join(scopes),
         'scopes_list': scopes,
-        'authorization_url': f'{authority_root}/authorize',
-        'token_url': f'{authority_root}/token',
+        'authorization_url': authorization_url,
+        'token_url': token_url,
     }
 
 
