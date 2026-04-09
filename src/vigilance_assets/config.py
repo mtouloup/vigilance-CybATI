@@ -10,6 +10,7 @@ DEFAULT_ASSETS_WORKSHEET = "ASSETS"
 DEFAULT_STORAGE_BACKEND = "google_sheets"
 DEFAULT_AUTH_MODE = "none"
 DEFAULT_GRAPH_SCOPES = "https://graph.microsoft.com/.default"
+DEFAULT_AUTH_PUBLIC_PATHS = ("/docs", "/openapi.json", "/swagger.json", "/health", "/swaggerui")
 
 
 class ConfigurationError(ValueError):
@@ -96,6 +97,7 @@ class AppRuntimeSettings:
     google_sheets: GoogleSheetsSettings | None = None
     sharepoint: SharePointSettings | None = None
     entra_obo: EntraOboSettings | None = None
+    auth_public_paths: tuple[str, ...] = DEFAULT_AUTH_PUBLIC_PATHS
 
     def validate(self) -> None:
         if self.storage_backend == "google_sheets":
@@ -153,6 +155,7 @@ def load_runtime_settings(env: Mapping[str, str] | None = None) -> AppRuntimeSet
             api_audience=_read_optional_str(values, "ENTRA_API_AUDIENCE") or "",
             graph_scopes=_read_scopes(values),
         ),
+        auth_public_paths=_read_auth_public_paths(values),
     )
     settings.validate()
     return settings
@@ -185,3 +188,11 @@ def _read_scopes(env: Mapping[str, str]) -> tuple[str, ...]:
     raw_value = _read_str(env, "GRAPH_SCOPES", default=DEFAULT_GRAPH_SCOPES)
     scopes = tuple(part.strip() for part in raw_value.split() if part.strip())
     return scopes or (DEFAULT_GRAPH_SCOPES,)
+
+
+def _read_auth_public_paths(env: Mapping[str, str]) -> tuple[str, ...]:
+    raw_value = _read_optional_str(env, "AUTH_PUBLIC_PATHS")
+    if raw_value is None:
+        return DEFAULT_AUTH_PUBLIC_PATHS
+    paths = tuple(part.strip() for part in raw_value.split(",") if part.strip())
+    return paths or DEFAULT_AUTH_PUBLIC_PATHS

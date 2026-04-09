@@ -67,6 +67,37 @@ class AuthLayerTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertEqual(response.get_json()['subject'], 'sub-1')
 
+    def test_auth_middleware_allows_configured_public_paths_without_token(self) -> None:
+        app = Flask(__name__)
+
+        @app.get('/docs')
+        def _docs():
+            return {'ok': True}, 200
+
+        @app.get('/docs/<path:filename>')
+        def _docs_asset(filename: str):
+            return {'name': filename}, 200
+
+        @app.get('/docs-private')
+        def _docs_private():
+            return {'ok': True}, 200
+
+        settings = AppRuntimeSettings(
+            auth_mode='entra_obo',
+            storage_backend='google_sheets',
+            google_sheets=GoogleSheetsSettings(spreadsheet_id='sheet-1', read_only_public_fallback=True),
+            sharepoint=SharePointSettings(site_id='site', item_id='item'),
+            entra_obo=self._entra_settings(),
+            auth_public_paths=('/docs',),
+        )
+        configure_auth(app, settings)
+
+        client = app.test_client()
+        self.assertEqual(client.get('/docs').status_code, 200)
+        self.assertEqual(client.get('/docs/').status_code, 404)
+        self.assertEqual(client.get('/docs/swagger-ui.css').status_code, 200)
+        self.assertEqual(client.get('/docs-private').status_code, 401)
+
     @patch('vigilance_assets.auth.msal.ConfidentialClientApplication')
     def test_obo_token_broker_uses_on_behalf_of_flow(self, msal_app_cls: Mock) -> None:
         app_instance = msal_app_cls.return_value
