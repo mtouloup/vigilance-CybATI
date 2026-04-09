@@ -16,11 +16,26 @@ def openapi_document() -> Response:
     return Response(json.dumps(document, indent=2), mimetype='application/json')
 
 
+@openapi_bp.get('/swagger.json')
+def swagger_document() -> Response:
+    document = build_openapi_document(current_app)
+    return Response(json.dumps(document, indent=2), mimetype='application/json')
+
+
 @openapi_bp.get('/docs')
 def swagger_ui() -> str:
     spec_url = current_app.config.get('OPENAPI_SPEC_URL', '/openapi.json')
     swagger_js = '/swaggerui/swagger-ui-bundle.js'
     swagger_css = '/swaggerui/swagger-ui.css'
+    oauth_config = _swagger_oauth_ui_config(current_app)
+    oauth_init_script = ""
+    if oauth_config["enabled"]:
+        oauth_init_script = f"""
+      window.ui.initOAuth({{
+        clientId: '{oauth_config["client_id"]}',
+        scopes: '{oauth_config["scopes"]}',
+        usePkceWithAuthorizationCodeGrant: true
+      }});"""
     return f"""<!doctype html>
 <html lang='en'>
   <head>
@@ -40,6 +55,7 @@ def swagger_ui() -> str:
         presets: [SwaggerUIBundle.presets.apis],
         layout: 'BaseLayout'
       }});
+      {oauth_init_script}
     </script>
   </body>
 </html>"""
@@ -51,6 +67,8 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
     asset_schema_name = 'AssetPayload'
     patch_schema_name = 'AssetPatchPayload'
 
+    security_schemes = _security_schemes(app)
+    secured_operation = {'security': [{'bearerAuth': []}]}
     return {
         'openapi': '3.0.3',
         'info': {
@@ -70,6 +88,7 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
                 'get': {
                     'tags': ['Assets'],
                     'summary': 'List assets',
+                    **secured_operation,
                     'parameters': [
                         *_asset_list_parameters(catalog),
                     ],
@@ -78,6 +97,7 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
                 'post': {
                     'tags': ['Assets'],
                     'summary': 'Create an asset',
+                    **secured_operation,
                     'parameters': [_updated_by_header_parameter()],
                     'requestBody': _json_body_ref(asset_schema_name, required=True),
                     'responses': {'201': _response_ref('AssetEnvelope'), '400': _response_ref('ErrorEnvelope'), '409': _response_ref('ErrorEnvelope')},
@@ -87,12 +107,14 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
                 'get': {
                     'tags': ['Assets'],
                     'summary': 'Get one asset',
+                    **secured_operation,
                     'parameters': [_asset_id_parameter()],
                     'responses': {'200': _response_ref('AssetEnvelope'), '404': _response_ref('ErrorEnvelope')},
                 },
                 'patch': {
                     'tags': ['Assets'],
                     'summary': 'Patch an asset',
+                    **secured_operation,
                     'parameters': [_asset_id_parameter(), _updated_by_header_parameter()],
                     'requestBody': _json_body_ref(patch_schema_name, required=True),
                     'responses': {'200': _response_ref('AssetEnvelope'), '400': _response_ref('ErrorEnvelope'), '404': _response_ref('ErrorEnvelope')},
@@ -100,6 +122,7 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
                 'put': {
                     'tags': ['Assets'],
                     'summary': 'Replace an asset',
+                    **secured_operation,
                     'parameters': [_asset_id_parameter(), _updated_by_header_parameter()],
                     'requestBody': _json_body_ref(asset_schema_name, required=True),
                     'responses': {'200': _response_ref('AssetEnvelope'), '400': _response_ref('ErrorEnvelope'), '404': _response_ref('ErrorEnvelope')},
@@ -107,6 +130,7 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
                 'delete': {
                     'tags': ['Assets'],
                     'summary': 'Archive or delete an asset',
+                    **secured_operation,
                     'parameters': [
                         _asset_id_parameter(),
                         {
@@ -123,6 +147,7 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
                 'get': {
                     'tags': ['Assets'],
                     'summary': 'Get inventory quality report',
+                    **secured_operation,
                     'responses': {'200': _response_ref('QualityEnvelope')},
                 },
             },
@@ -130,6 +155,7 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
                 'get': {
                     'tags': ['Vocabularies'],
                     'summary': 'List all vocabularies',
+                    **secured_operation,
                     'responses': {'200': _response_ref('VocabularyCollectionEnvelope')},
                 }
             },
@@ -137,6 +163,7 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
                 'get': {
                     'tags': ['Vocabularies'],
                     'summary': 'Get one vocabulary',
+                    **secured_operation,
                     'parameters': [{'name': 'name', 'in': 'path', 'required': True, 'schema': {'type': 'string'}}],
                     'responses': {'200': _response_ref('VocabularyEnvelope'), '404': _response_ref('ErrorEnvelope')},
                 }
@@ -145,6 +172,7 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
                 'get': {
                     'tags': ['Schema'],
                     'summary': 'Get the canonical asset schema',
+                    **secured_operation,
                     'responses': {'200': _response_ref('SchemaEnvelope')},
                 }
             },
@@ -152,12 +180,50 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
                 'get': {
                     'tags': ['Schema'],
                     'summary': 'Get the canonical schema for a single category',
+                    **secured_operation,
                     'parameters': [{'name': 'category', 'in': 'path', 'required': True, 'schema': {'type': 'string', 'enum': list(catalog.category_fields)}}],
                     'responses': {'200': _response_ref('SchemaEnvelope'), '404': _response_ref('ErrorEnvelope')},
                 }
             },
         },
-        'components': {'securitySchemes': {'bearerAuth': {'type': 'http', 'scheme': 'bearer', 'bearerFormat': 'JWT'}}, 'schemas': _components(catalog)},
+        'components': {'securitySchemes': security_schemes, 'schemas': _components(catalog)},
+    }
+
+
+def _security_schemes(app: Any) -> dict[str, Any]:
+    schemes: dict[str, Any] = {'bearerAuth': {'type': 'http', 'scheme': 'bearer', 'bearerFormat': 'JWT'}}
+    oauth_config = _swagger_oauth_ui_config(app)
+    if oauth_config["enabled"]:
+        schemes['entraOAuth2'] = {
+            'type': 'oauth2',
+            'flows': {
+                'authorizationCode': {
+                    'authorizationUrl': oauth_config['authorization_url'],
+                    'tokenUrl': oauth_config['token_url'],
+                    'scopes': {scope: f'Access scope for {scope}' for scope in oauth_config['scopes_list']},
+                }
+            },
+        }
+    return schemes
+
+
+def _swagger_oauth_ui_config(app: Any) -> dict[str, Any]:
+    enabled = bool(app.config.get('SWAGGER_USE_OAUTH'))
+    tenant_id = str(app.config.get('SWAGGER_OAUTH_TENANT_ID') or '').strip()
+    client_id = str(app.config.get('SWAGGER_OAUTH_CLIENT_ID') or '').strip()
+    scopes = [scope for scope in app.config.get('SWAGGER_OAUTH_SCOPES', ()) if isinstance(scope, str) and scope.strip()]
+    if not (enabled and tenant_id and client_id and scopes):
+        return {'enabled': False}
+
+    authority_root = f'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0'
+    return {
+        'enabled': True,
+        'tenant_id': tenant_id,
+        'client_id': client_id,
+        'scopes': ' '.join(scopes),
+        'scopes_list': scopes,
+        'authorization_url': f'{authority_root}/authorize',
+        'token_url': f'{authority_root}/token',
     }
 
 

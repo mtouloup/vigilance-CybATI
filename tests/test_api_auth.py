@@ -106,6 +106,15 @@ class ApiAuthTests(unittest.TestCase):
         self.assertEqual(response.get_json()['openapi'], '3.0.3')
         validator.validate.assert_not_called()
 
+    def test_swagger_json_is_public_without_token(self):
+        client, validator = self._build_client()
+
+        response = client.get('/swagger.json')
+
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json()['openapi'], '3.0.3')
+        validator.validate.assert_not_called()
+
     def test_allows_authenticated_mutation(self):
         client, validator = self._build_client()
 

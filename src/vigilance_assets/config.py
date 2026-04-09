@@ -11,6 +11,7 @@ DEFAULT_STORAGE_BACKEND = "google_sheets"
 DEFAULT_AUTH_MODE = "none"
 DEFAULT_GRAPH_SCOPES = "https://graph.microsoft.com/.default"
 DEFAULT_AUTH_PUBLIC_PATHS = ("/docs", "/openapi.json", "/swagger.json", "/health", "/swaggerui")
+DEFAULT_SWAGGER_USE_OAUTH = False
 
 
 class ConfigurationError(ValueError):
@@ -98,6 +99,10 @@ class AppRuntimeSettings:
     sharepoint: SharePointSettings | None = None
     entra_obo: EntraOboSettings | None = None
     auth_public_paths: tuple[str, ...] = DEFAULT_AUTH_PUBLIC_PATHS
+    swagger_use_oauth: bool = DEFAULT_SWAGGER_USE_OAUTH
+    swagger_entra_tenant_id: str | None = None
+    swagger_entra_client_id: str | None = None
+    swagger_entra_api_scope: str | None = None
 
     def validate(self) -> None:
         if self.storage_backend == "google_sheets":
@@ -156,6 +161,10 @@ def load_runtime_settings(env: Mapping[str, str] | None = None) -> AppRuntimeSet
             graph_scopes=_read_scopes(values),
         ),
         auth_public_paths=_read_auth_public_paths(values),
+        swagger_use_oauth=_read_bool(values, "SWAGGER_USE_OAUTH", default=DEFAULT_SWAGGER_USE_OAUTH),
+        swagger_entra_tenant_id=_read_optional_str(values, "ENTRA_TENANT_ID"),
+        swagger_entra_client_id=_read_optional_str(values, "ENTRA_CLIENT_ID"),
+        swagger_entra_api_scope=_read_optional_str(values, "ENTRA_API_SCOPE"),
     )
     settings.validate()
     return settings
