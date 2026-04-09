@@ -4,7 +4,8 @@ from typing import Any
 
 from flask import Flask, send_from_directory
 
-from .auth import AuthenticationError, DownstreamTokenError
+from .jwt_validation import AuthenticationError
+from .token_acquisition import DownstreamTokenError
 from .blueprints import assets_bp, error_response, schema_bp, vocabularies_bp
 from .openapi import openapi_bp
 from .repository import (

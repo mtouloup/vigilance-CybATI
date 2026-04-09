@@ -101,6 +101,8 @@ Optional:
 4. Grant tenant admin consent where required.
 5. Ensure users who call the API also have SharePoint permissions to the workbook location (`gft365.sharepoint.com` tenant).
 
+For this deployment, the expected Entra tenant is the one backing `gft365.sharepoint.com`.
+
 ### End-to-end delegated/OBO flow
 
 1. User signs in to Entra ID and client obtains access token for **this API** (`aud=VIGILANCE_ENTRA_API_AUDIENCE`).
@@ -195,3 +197,18 @@ docker compose up --build
 
 - Swagger UI: `http://localhost:8000/docs`
 - OpenAPI JSON: `http://localhost:8000/openapi.json`
+
+### Swagger interactive Entra login
+
+`/docs` and `/openapi.json` stay public so users can reach Swagger before signing in.
+
+Enable OAuth in Swagger UI with:
+
+- `VIGILANCE_SWAGGER_USE_OAUTH=true`
+- `VIGILANCE_ENTRA_TENANT_ID`
+- `VIGILANCE_ENTRA_CLIENT_ID`
+- `VIGILANCE_ENTRA_API_SCOPE` (or `VIGILANCE_ENTRA_API_SCOPES`)
+- optional `VIGILANCE_ENTRA_AUTHORIZATION_URL`
+- optional `VIGILANCE_ENTRA_TOKEN_URL`
+
+When enabled, OpenAPI publishes an OAuth2 `authorizationCode` scheme and Swagger shows **Authorize**. Swagger acquires an access token for this API scope (not Graph) and sends it as bearer auth to protected endpoints.
