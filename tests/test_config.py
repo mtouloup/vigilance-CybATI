@@ -114,6 +114,25 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(repository.workbook_reference, 'item-id')
         self.assertFalse(repository.read_only)
 
+    def test_create_repository_from_settings_uses_sharepoint_workbook_path_reference(self) -> None:
+        settings = AppRuntimeSettings(
+            storage_backend='sharepoint',
+            google_sheets=GoogleSheetsSettings(spreadsheet_id='sheet-123', read_only_public_fallback=True),
+            sharepoint=SharePointSettings(
+                tenant_id='tenant',
+                client_id='client',
+                client_secret='secret',
+                site_id='site-id',
+                workbook_path='Shared Documents/assets.xlsx',
+            ),
+        )
+
+        fake_gateway = type('Gateway', (), {'is_read_only': False})()
+        with patch('vigilance_assets.runtime.build_sharepoint_gateway', return_value=fake_gateway):
+            repository = create_repository_from_settings(settings)
+
+        self.assertEqual(repository.workbook_reference, 'Shared Documents/assets.xlsx')
+
     def test_create_runtime_app_registers_runtime_settings_for_container_startup(self) -> None:
         from vigilance_assets.runtime import create_runtime_app
 

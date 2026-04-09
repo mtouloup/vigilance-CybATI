@@ -88,26 +88,41 @@ class GraphApiClient:
             raise SharePointConfigurationError("Microsoft Graph token response did not include access_token.")
         return token
 
-    def get(self, path: str) -> dict[str, Any]:
-        return self._request_json("GET", path)
+    def get(self, path: str, *, headers: Mapping[str, str] | None = None) -> dict[str, Any]:
+        return self._request_json("GET", path, headers=headers)
 
-    def post(self, path: str, payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
-        return self._request_json("POST", path, payload)
+    def post(
+        self,
+        path: str,
+        payload: Mapping[str, Any] | None = None,
+        *,
+        headers: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
+        return self._request_json("POST", path, payload, headers=headers)
 
-    def patch(self, path: str, payload: Mapping[str, Any]) -> dict[str, Any]:
-        return self._request_json("PATCH", path, payload)
+    def patch(self, path: str, payload: Mapping[str, Any], *, headers: Mapping[str, str] | None = None) -> dict[str, Any]:
+        return self._request_json("PATCH", path, payload, headers=headers)
 
-    def _request_json(self, method: str, path: str, payload: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    def _request_json(
+        self,
+        method: str,
+        path: str,
+        payload: Mapping[str, Any] | None = None,
+        *,
+        headers: Mapping[str, str] | None = None,
+    ) -> dict[str, Any]:
         url = f"{GRAPH_BASE_URL}{path}"
         data = None
-        headers = {
+        request_headers = {
             "Authorization": f"Bearer {self._token()}",
             "Accept": "application/json",
         }
+        if headers:
+            request_headers.update(headers)
         if payload is not None:
             data = json.dumps(payload).encode("utf-8")
-            headers["Content-Type"] = "application/json"
-        request = Request(url, data=data, headers=headers, method=method)
+            request_headers["Content-Type"] = "application/json"
+        request = Request(url, data=data, headers=request_headers, method=method)
         try:
             with urlopen(request, timeout=self.timeout_seconds) as response:
                 raw = response.read().decode("utf-8")
@@ -133,6 +148,7 @@ class SharePointTableGateway(SpreadsheetTableGateway):
     expected_headers: Sequence[str] = ()
     timeout_seconds: float = 20.0
     header_scan_limit: int = 10
+    use_workbook_sessions: bool = True
     graph_client: GraphApiClient | None = None
 
     def __post_init__(self) -> None:
@@ -152,6 +168,7 @@ class SharePointTableGateway(SpreadsheetTableGateway):
         self._resolved_site_id: str | None = self.settings.site_id
         self._resolved_drive_id: str | None = self.settings.drive_id
         self._resolved_item_id: str | None = self.settings.item_id
+        self._workbook_session_id: str | None = None
 
     @property
     def is_read_only(self) -> bool:
@@ -164,10 +181,12 @@ class SharePointTableGateway(SpreadsheetTableGateway):
     def validate_connection(self) -> WorksheetSnapshot:
         snapshot = self._load_snapshot(self.worksheet_name)
         LOGGER.info(
-            "Configured SharePoint backend for site=%s worksheet=%s workbook=%s.",
-            self.settings.site_id or self.settings.site_url,
+            "Configured SharePoint backend for site=%s drive=%s workbook=%s worksheet=%s sessions=%s.",
+            self._resolved_site_id or self.settings.site_url,
+            self._resolved_drive_id or self.settings.drive_id or "default-site-drive",
+            self._resolved_item_id or self.settings.item_id or self.settings.workbook_path,
             snapshot.sheet_name,
-            self.settings.item_id or self.settings.workbook_path,
+            "enabled" if self.use_workbook_sessions else "disabled",
         )
         return snapshot
 
@@ -189,7 +208,11 @@ class SharePointTableGateway(SpreadsheetTableGateway):
                 )
             ]
         }
-        self._graph().patch(self._worksheet_endpoint(f"/range(address='{row_range}')"), payload)
+        self._graph().patch(
+            self._worksheet_endpoint(f"/range(address='{row_range}')"),
+            payload,
+            headers=self._workbook_request_headers(),
+        )
         return self._find_appended_row(snapshot.sheet_name, values.get("Asset_ID"), appended_row_number=next_empty_row)
 
     def update_row(self, sheet_name: str, row_number: int, values: RowData) -> SheetRecord:
@@ -205,17 +228,28 @@ class SharePointTableGateway(SpreadsheetTableGateway):
                 )
             ]
         }
-        self._graph().patch(self._worksheet_endpoint(f"/range(address='{row_range}')"), payload)
+        self._graph().patch(
+            self._worksheet_endpoint(f"/range(address='{row_range}')"),
+            payload,
+            headers=self._workbook_request_headers(),
+        )
         return SheetRecord(row_number=row_number, values=dict(values))
 
     def delete_row(self, sheet_name: str, row_number: int) -> None:
         snapshot = self._load_snapshot(sheet_name)
         delete_range = self._row_range(snapshot, row_number=row_number)
-        self._graph().post(self._worksheet_endpoint(f"/range(address='{delete_range}')/delete"), {"shift": "Up"})
+        self._graph().post(
+            self._worksheet_endpoint(f"/range(address='{delete_range}')/delete"),
+            {"shift": "Up"},
+            headers=self._workbook_request_headers(),
+        )
 
     def _load_snapshot(self, sheet_name: str) -> WorksheetSnapshot:
         resolved_sheet_name = self._resolve_sheet_name(sheet_name)
-        response = self._graph().get(self._worksheet_endpoint("/usedRange(valuesOnly=false)"))
+        response = self._graph().get(
+            self._worksheet_endpoint("/usedRange(valuesOnly=false)"),
+            headers=self._workbook_request_headers(),
+        )
         raw_rows = response.get("values")
         if not isinstance(raw_rows, list) or not raw_rows:
             raise SharePointWorksheetError(
@@ -266,7 +300,9 @@ class SharePointTableGateway(SpreadsheetTableGateway):
         if not self.settings.workbook_path:
             raise SharePointConfigurationError("SharePoint workbook identifier is missing.")
         encoded_path = quote(self.settings.workbook_path.strip("/"), safe="/")
-        response = self._graph().get(f"/sites/{quote(site_id, safe='')}/drives/{quote(drive_id, safe='')}/root:/{encoded_path}")
+        response = self._graph().get(
+            f"/sites/{quote(site_id, safe='')}/drives/{quote(drive_id, safe='')}/root:/{encoded_path}:"
+        )
         item_id = response.get("id")
         if not isinstance(item_id, str) or not item_id:
             raise SharePointWorksheetError("Unable to resolve workbook item id from VIGILANCE_SHAREPOINT_WORKBOOK_PATH.")
@@ -438,6 +474,20 @@ class SharePointTableGateway(SpreadsheetTableGateway):
         if self._graph_client is None:
             self._graph_client = GraphApiClient(self.settings, timeout_seconds=self.timeout_seconds)
         return self._graph_client
+
+    def _workbook_request_headers(self) -> dict[str, str] | None:
+        if not self.use_workbook_sessions:
+            return None
+        if self._workbook_session_id is None:
+            response = self._graph().post(
+                f"{self._workbook_base_path()}/workbook/createSession",
+                {"persistChanges": True},
+            )
+            session_id = response.get("id")
+            if not isinstance(session_id, str) or not session_id.strip():
+                raise SharePointWorksheetError("Microsoft Graph workbook session response did not include a valid session id.")
+            self._workbook_session_id = session_id
+        return {"workbook-session-id": self._workbook_session_id}
 
     @staticmethod
     def _normalize_header(value: Any) -> str:

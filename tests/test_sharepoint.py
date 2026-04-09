@@ -12,10 +12,13 @@ class FakeGraphClient:
     def __init__(self, used_rows: list[list[str]], post_append_rows: list[list[str]] | None = None) -> None:
         self.used_rows = used_rows
         self.post_append_rows = post_append_rows
-        self.patch_calls: list[tuple[str, dict[str, object]]] = []
-        self.delete_calls: list[tuple[str, dict[str, object]]] = []
+        self.patch_calls: list[tuple[str, dict[str, object], dict[str, str] | None]] = []
+        self.delete_calls: list[tuple[str, dict[str, object], dict[str, str] | None]] = []
+        self.session_calls: list[tuple[str, dict[str, object] | None]] = []
+        self.get_calls: list[tuple[str, dict[str, str] | None]] = []
 
-    def get(self, path: str):
+    def get(self, path: str, *, headers: dict[str, str] | None = None):
+        self.get_calls.append((path, headers))
         if path.endswith('/usedRange(valuesOnly=false)'):
             if self.patch_calls and self.post_append_rows is not None:
                 return {'values': self.post_append_rows}
@@ -26,12 +29,15 @@ class FakeGraphClient:
             return {'id': 'item-1'}
         return {'id': 'site-1'}
 
-    def patch(self, path: str, payload: dict[str, object]):
-        self.patch_calls.append((path, payload))
+    def patch(self, path: str, payload: dict[str, object], *, headers: dict[str, str] | None = None):
+        self.patch_calls.append((path, payload, headers))
         return {}
 
-    def post(self, path: str, payload: dict[str, object] | None = None):
-        self.delete_calls.append((path, payload or {}))
+    def post(self, path: str, payload: dict[str, object] | None = None, *, headers: dict[str, str] | None = None):
+        if path.endswith('/workbook/createSession'):
+            self.session_calls.append((path, payload))
+            return {'id': 'session-123'}
+        self.delete_calls.append((path, payload or {}, headers))
         return {}
 
 
@@ -122,13 +128,39 @@ class SharePointGatewayTests(unittest.TestCase):
         )
 
         self.assertEqual(record.row_number, 4)
-        patch_path, payload = graph.patch_calls[0]
+        patch_path, payload, headers = graph.patch_calls[0]
         end_column = gateway._column_index_to_a1(len(actual_headers) - 1)
         self.assertIn(f"range(address='A4:{end_column}4')", unquote(patch_path))
+        self.assertEqual(headers, {'workbook-session-id': 'session-123'})
         sent_values = payload['values'][0]
         self.assertEqual(sent_values[tool_idx], 'EDR (Endpoint Detection and Response)')
         self.assertEqual(sent_values[tool_idx + 1], '')
         self.assertEqual(sent_values[service_idx + 1], '')
+        self.assertEqual(len(graph.session_calls), 1)
+
+    def test_resolve_item_id_uses_root_path_addressing_with_trailing_colon(self) -> None:
+        settings = SharePointSettings(
+            tenant_id='tenant',
+            client_id='client',
+            client_secret='secret',
+            site_id='site-1',
+            drive_id='drive-1',
+            workbook_path='Shared Documents/inventory.xlsx',
+        )
+        graph = FakeGraphClient(used_rows=[['Asset_ID', 'Asset_Category']])
+        gateway = SharePointTableGateway(
+            settings=settings,
+            expected_headers=self.mapper.ordered_headers,
+            graph_client=graph,
+            use_workbook_sessions=False,
+        )
+
+        gateway._resolved_item_id = None
+        gateway._resolve_item_id('site-1', 'drive-1')
+
+        path_calls = [path for path, _ in graph.get_calls if '/root:/' in path]
+        self.assertTrue(path_calls)
+        self.assertTrue(path_calls[0].endswith(':'))
 
     def test_mapper_orders_data_origin_after_sharing_policy(self) -> None:
         headers = list(self.mapper.ordered_headers)
