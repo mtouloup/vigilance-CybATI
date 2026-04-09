@@ -8,6 +8,7 @@ from vigilance_assets import (
     DEFAULT_ASSETS_WORKSHEET,
     AppRuntimeSettings,
     ConfigurationError,
+    EntraOboSettings,
     GoogleSheetsSettings,
     SharePointSettings,
     create_repository_from_settings,
@@ -39,16 +40,18 @@ class ConfigTests(unittest.TestCase):
         self.assertEqual(settings.google_sheets.worksheet_name, DEFAULT_ASSETS_WORKSHEET)
 
     def test_load_runtime_settings_requires_sharepoint_values_for_sharepoint_backend(self) -> None:
-        with self.assertRaisesRegex(ConfigurationError, 'VIGILANCE_SHAREPOINT_TENANT_ID must be set'):
+        with self.assertRaisesRegex(ConfigurationError, 'VIGILANCE_SHAREPOINT_SITE_ID'):
             load_runtime_settings({'VIGILANCE_STORAGE_BACKEND': 'sharepoint'})
 
     def test_load_runtime_settings_accepts_sharepoint_path_configuration(self) -> None:
         settings = load_runtime_settings(
             {
                 'VIGILANCE_STORAGE_BACKEND': 'sharepoint',
-                'VIGILANCE_SHAREPOINT_TENANT_ID': 'tenant-id',
-                'VIGILANCE_SHAREPOINT_CLIENT_ID': 'client-id',
-                'VIGILANCE_SHAREPOINT_CLIENT_SECRET': 'secret',
+                'VIGILANCE_AUTH_MODE': 'entra_obo',
+                'VIGILANCE_ENTRA_TENANT_ID': 'tenant-id',
+                'VIGILANCE_ENTRA_CLIENT_ID': 'client-id',
+                'VIGILANCE_ENTRA_CLIENT_SECRET': 'secret',
+                'VIGILANCE_ENTRA_API_AUDIENCE': 'api://asset-api',
                 'VIGILANCE_SHAREPOINT_SITE_ID': 'site-id',
                 'VIGILANCE_SHAREPOINT_WORKBOOK_PATH': 'Shared Documents/inventory.xlsx',
             }
@@ -58,6 +61,7 @@ class ConfigTests(unittest.TestCase):
         assert settings.sharepoint is not None
         self.assertEqual(settings.sharepoint.worksheet_name, DEFAULT_ASSETS_WORKSHEET)
         self.assertEqual(settings.sharepoint.workbook_path, 'Shared Documents/inventory.xlsx')
+        self.assertEqual(settings.auth_mode, 'entra_obo')
 
     def test_load_runtime_settings_rejects_unknown_backend(self) -> None:
         with self.assertRaisesRegex(ConfigurationError, 'Unsupported VIGILANCE_STORAGE_BACKEND value'):
@@ -82,7 +86,7 @@ class ConfigTests(unittest.TestCase):
                 spreadsheet_id='sheet-123',
                 service_account_json='{"type":"service_account"}',
             ),
-            sharepoint=SharePointSettings(tenant_id='x', client_id='y', client_secret='z', site_id='s', item_id='i'),
+            sharepoint=SharePointSettings(site_id='s', item_id='i'),
         )
 
         fake_gateway = type('Gateway', (), {'is_read_only': False})()
@@ -96,39 +100,52 @@ class ConfigTests(unittest.TestCase):
     def test_create_repository_from_settings_uses_sharepoint_backend(self) -> None:
         settings = AppRuntimeSettings(
             storage_backend='sharepoint',
+            auth_mode='entra_obo',
             google_sheets=GoogleSheetsSettings(spreadsheet_id='sheet-123', read_only_public_fallback=True),
             sharepoint=SharePointSettings(
+                site_id='site-id',
+                item_id='item-id',
+            ),
+            entra_obo=EntraOboSettings(
                 tenant_id='tenant',
                 client_id='client',
                 client_secret='secret',
-                site_id='site-id',
-                item_id='item-id',
+                api_audience='api://asset-api',
             ),
         )
 
         fake_gateway = type('Gateway', (), {'is_read_only': False})()
-        with patch('vigilance_assets.runtime.build_sharepoint_gateway', return_value=fake_gateway):
+        with patch('vigilance_assets.runtime.EntraOboTokenBroker') as broker_cls, patch('vigilance_assets.runtime.build_sharepoint_gateway', return_value=fake_gateway) as gateway_builder:
+            broker_cls.return_value = object()
             repository = create_repository_from_settings(settings)
 
         self.assertIs(repository.gateway, fake_gateway)
+        _, kwargs = gateway_builder.call_args
+        self.assertFalse(kwargs['validate_on_startup'])
+        self.assertTrue(callable(kwargs['graph_access_token_provider']))
         self.assertEqual(repository.workbook_reference, 'item-id')
         self.assertFalse(repository.read_only)
 
     def test_create_repository_from_settings_uses_sharepoint_workbook_path_reference(self) -> None:
         settings = AppRuntimeSettings(
             storage_backend='sharepoint',
+            auth_mode='entra_obo',
             google_sheets=GoogleSheetsSettings(spreadsheet_id='sheet-123', read_only_public_fallback=True),
             sharepoint=SharePointSettings(
+                site_id='site-id',
+                workbook_path='Shared Documents/assets.xlsx',
+            ),
+            entra_obo=EntraOboSettings(
                 tenant_id='tenant',
                 client_id='client',
                 client_secret='secret',
-                site_id='site-id',
-                workbook_path='Shared Documents/assets.xlsx',
+                api_audience='api://asset-api',
             ),
         )
 
         fake_gateway = type('Gateway', (), {'is_read_only': False})()
-        with patch('vigilance_assets.runtime.build_sharepoint_gateway', return_value=fake_gateway):
+        with patch('vigilance_assets.runtime.EntraOboTokenBroker') as broker_cls, patch('vigilance_assets.runtime.build_sharepoint_gateway', return_value=fake_gateway):
+            broker_cls.return_value = object()
             repository = create_repository_from_settings(settings)
 
         self.assertEqual(repository.workbook_reference, 'Shared Documents/assets.xlsx')
@@ -142,7 +159,7 @@ class ConfigTests(unittest.TestCase):
                 spreadsheet_id='sheet-123',
                 service_account_json='{"type":"service_account"}',
             ),
-            sharepoint=SharePointSettings(tenant_id='x', client_id='y', client_secret='z', site_id='s', item_id='i'),
+            sharepoint=SharePointSettings(site_id='s', item_id='i'),
         )
         from tests.test_repository import RepositoryDouble
 

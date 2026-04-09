@@ -8,6 +8,8 @@ from typing import Literal, Mapping
 ENV_PREFIX = "VIGILANCE_"
 DEFAULT_ASSETS_WORKSHEET = "ASSETS"
 DEFAULT_STORAGE_BACKEND = "google_sheets"
+DEFAULT_AUTH_MODE = "none"
+DEFAULT_GRAPH_SCOPES = "https://graph.microsoft.com/.default"
 
 
 class ConfigurationError(ValueError):
@@ -46,9 +48,6 @@ class GoogleSheetsSettings:
 
 @dataclass(frozen=True, slots=True)
 class SharePointSettings:
-    tenant_id: str
-    client_id: str
-    client_secret: str
     worksheet_name: str = DEFAULT_ASSETS_WORKSHEET
     site_id: str | None = None
     site_url: str | None = None
@@ -57,12 +56,6 @@ class SharePointSettings:
     workbook_path: str | None = None
 
     def validate(self) -> None:
-        if not self.tenant_id:
-            raise ConfigurationError("VIGILANCE_SHAREPOINT_TENANT_ID must be set.")
-        if not self.client_id:
-            raise ConfigurationError("VIGILANCE_SHAREPOINT_CLIENT_ID must be set.")
-        if not self.client_secret:
-            raise ConfigurationError("VIGILANCE_SHAREPOINT_CLIENT_SECRET must be set.")
         if not self.worksheet_name:
             raise ConfigurationError("VIGILANCE_SHAREPOINT_WORKSHEET_NAME must be set.")
         if not self.site_id and not self.site_url:
@@ -76,33 +69,68 @@ class SharePointSettings:
 
 
 @dataclass(frozen=True, slots=True)
+class EntraOboSettings:
+    tenant_id: str
+    client_id: str
+    client_secret: str
+    api_audience: str
+    graph_scopes: tuple[str, ...] = (DEFAULT_GRAPH_SCOPES,)
+
+    def validate(self) -> None:
+        if not self.tenant_id:
+            raise ConfigurationError("VIGILANCE_ENTRA_TENANT_ID must be set.")
+        if not self.client_id:
+            raise ConfigurationError("VIGILANCE_ENTRA_CLIENT_ID must be set.")
+        if not self.client_secret:
+            raise ConfigurationError("VIGILANCE_ENTRA_CLIENT_SECRET must be set.")
+        if not self.api_audience:
+            raise ConfigurationError("VIGILANCE_ENTRA_API_AUDIENCE must be set.")
+        if not self.graph_scopes:
+            raise ConfigurationError("VIGILANCE_GRAPH_SCOPES must include at least one scope.")
+
+
+@dataclass(frozen=True, slots=True)
 class AppRuntimeSettings:
     storage_backend: Literal["google_sheets", "sharepoint"] = DEFAULT_STORAGE_BACKEND
+    auth_mode: Literal["none", "entra_obo"] = DEFAULT_AUTH_MODE
     google_sheets: GoogleSheetsSettings | None = None
     sharepoint: SharePointSettings | None = None
+    entra_obo: EntraOboSettings | None = None
 
     def validate(self) -> None:
         if self.storage_backend == "google_sheets":
             if self.google_sheets is None:
                 raise ConfigurationError("Google Sheets backend selected but Google settings are not configured.")
             self.google_sheets.validate()
-            return
-        if self.storage_backend == "sharepoint":
+        elif self.storage_backend == "sharepoint":
             if self.sharepoint is None:
                 raise ConfigurationError("SharePoint backend selected but SharePoint settings are not configured.")
             self.sharepoint.validate()
+        else:
+            raise ConfigurationError(
+                f"Unsupported VIGILANCE_STORAGE_BACKEND value: {self.storage_backend}. "
+                "Supported values: google_sheets, sharepoint."
+            )
+
+        if self.auth_mode == "none":
+            return
+        if self.auth_mode == "entra_obo":
+            if self.entra_obo is None:
+                raise ConfigurationError("Entra OBO auth mode selected but Entra settings are not configured.")
+            self.entra_obo.validate()
             return
         raise ConfigurationError(
-            f"Unsupported VIGILANCE_STORAGE_BACKEND value: {self.storage_backend}. "
-            "Supported values: google_sheets, sharepoint."
+            f"Unsupported VIGILANCE_AUTH_MODE value: {self.auth_mode}. Supported values: none, entra_obo."
         )
 
 
 def load_runtime_settings(env: Mapping[str, str] | None = None) -> AppRuntimeSettings:
     values = env if env is not None else os.environ
     storage_backend = _read_str(values, "STORAGE_BACKEND", default=DEFAULT_STORAGE_BACKEND).lower()
+    auth_mode = _read_str(values, "AUTH_MODE", default=DEFAULT_AUTH_MODE).lower()
     settings = AppRuntimeSettings(
         storage_backend=storage_backend,  # type: ignore[arg-type]
+        auth_mode=auth_mode,  # type: ignore[arg-type]
         google_sheets=GoogleSheetsSettings(
             spreadsheet_id=_read_optional_str(values, "GOOGLE_SPREADSHEET_ID") or "",
             worksheet_name=_read_str(values, "GOOGLE_WORKSHEET_NAME", default=DEFAULT_ASSETS_WORKSHEET),
@@ -111,15 +139,19 @@ def load_runtime_settings(env: Mapping[str, str] | None = None) -> AppRuntimeSet
             read_only_public_fallback=_read_bool(values, "GOOGLE_READ_ONLY_PUBLIC", default=False),
         ),
         sharepoint=SharePointSettings(
-            tenant_id=_read_optional_str(values, "SHAREPOINT_TENANT_ID") or "",
-            client_id=_read_optional_str(values, "SHAREPOINT_CLIENT_ID") or "",
-            client_secret=_read_optional_str(values, "SHAREPOINT_CLIENT_SECRET") or "",
             worksheet_name=_read_str(values, "SHAREPOINT_WORKSHEET_NAME", default=DEFAULT_ASSETS_WORKSHEET),
             site_id=_read_optional_str(values, "SHAREPOINT_SITE_ID"),
             site_url=_read_optional_str(values, "SHAREPOINT_SITE_URL"),
             drive_id=_read_optional_str(values, "SHAREPOINT_DRIVE_ID"),
             item_id=_read_optional_str(values, "SHAREPOINT_ITEM_ID"),
             workbook_path=_read_optional_str(values, "SHAREPOINT_WORKBOOK_PATH"),
+        ),
+        entra_obo=EntraOboSettings(
+            tenant_id=_read_optional_str(values, "ENTRA_TENANT_ID") or "",
+            client_id=_read_optional_str(values, "ENTRA_CLIENT_ID") or "",
+            client_secret=_read_optional_str(values, "ENTRA_CLIENT_SECRET") or "",
+            api_audience=_read_optional_str(values, "ENTRA_API_AUDIENCE") or "",
+            graph_scopes=_read_scopes(values),
         ),
     )
     settings.validate()
@@ -138,13 +170,6 @@ def _read_optional_str(env: Mapping[str, str], name: str) -> str | None:
     return normalized or None
 
 
-def _read_required_str(env: Mapping[str, str], name: str) -> str:
-    value = _read_optional_str(env, name)
-    if value is None:
-        raise ConfigurationError(f"{_env_name(name)} must be set.")
-    return value
-
-
 def _read_str(env: Mapping[str, str], name: str, *, default: str) -> str:
     return _read_optional_str(env, name) or default
 
@@ -154,3 +179,9 @@ def _read_bool(env: Mapping[str, str], name: str, *, default: bool) -> bool:
     if value is None:
         return default
     return value.lower() in {"1", "true", "yes", "on"}
+
+
+def _read_scopes(env: Mapping[str, str]) -> tuple[str, ...]:
+    raw_value = _read_str(env, "GRAPH_SCOPES", default=DEFAULT_GRAPH_SCOPES)
+    scopes = tuple(part.strip() for part in raw_value.split() if part.strip())
+    return scopes or (DEFAULT_GRAPH_SCOPES,)

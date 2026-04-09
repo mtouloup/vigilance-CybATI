@@ -20,7 +20,32 @@ Canonical asset schema and vocabulary files:
 - `docs/assets-schema.md`
 - `schema/assets_schema.json`
 
-The backend detects the canonical header row in the `ASSETS` worksheet, respects the decorative grouping row above it, writes aligned rows beginning at `Asset_ID`, preserves separator columns, and finds the next empty data row explicitly.
+The SharePoint adapter preserves worksheet alignment behavior:
+
+- detects the canonical `ASSETS` header row
+- ignores the decorative row above it
+- anchors writes at the `Asset_ID` column
+- explicitly finds the next empty data row
+- writes explicit aligned A1 ranges
+- preserves late category-specific columns and separator columns
+
+---
+
+## Authentication and authorization modes
+
+### `VIGILANCE_AUTH_MODE=none` (default)
+
+No API bearer-token enforcement. Useful only for local/testing environments.
+
+### `VIGILANCE_AUTH_MODE=entra_obo`
+
+The API requires Microsoft Entra ID JWT bearer tokens and validates:
+
+- issuer (`https://login.microsoftonline.com/<tenant>/v2.0`)
+- tenant (`tid` claim must match `VIGILANCE_ENTRA_TENANT_ID`)
+- audience (`aud` claim must match `VIGILANCE_ENTRA_API_AUDIENCE`)
+
+When SharePoint backend is enabled, the API uses OAuth 2.0 On-Behalf-Of (OBO) to exchange the incoming API token for a delegated Microsoft Graph token per request.
 
 ---
 
@@ -41,23 +66,21 @@ Optional:
 - `VIGILANCE_GOOGLE_WORKSHEET_NAME` (default `ASSETS`)
 - `VIGILANCE_GOOGLE_READ_ONLY_PUBLIC` (default `false`)
 
-### One-time setup
-
-1. Create/select a Google Cloud project.
-2. Enable Google Sheets API.
-3. Create a service account and key JSON.
-4. Share the target spreadsheet with service-account `client_email`.
-
 ---
 
-## SharePoint backend (Microsoft Graph)
+## SharePoint backend with delegated Graph access (Entra OBO)
+
+> For SharePoint + Excel workbook write APIs, this service uses delegated Graph access via OBO. It does **not** use app-only Graph permissions for workbook write operations.
 
 ### Required environment variables
 
 - `VIGILANCE_STORAGE_BACKEND=sharepoint`
-- `VIGILANCE_SHAREPOINT_TENANT_ID`
-- `VIGILANCE_SHAREPOINT_CLIENT_ID`
-- `VIGILANCE_SHAREPOINT_CLIENT_SECRET` (or adapt implementation for certificate flow)
+- `VIGILANCE_AUTH_MODE=entra_obo`
+- `VIGILANCE_ENTRA_TENANT_ID`
+- `VIGILANCE_ENTRA_CLIENT_ID`
+- `VIGILANCE_ENTRA_CLIENT_SECRET`
+- `VIGILANCE_ENTRA_API_AUDIENCE` (for example `api://<api-app-client-id>`)
+- `VIGILANCE_GRAPH_SCOPES` (default `https://graph.microsoft.com/.default`)
 - one of:
   - `VIGILANCE_SHAREPOINT_SITE_ID`, or
   - `VIGILANCE_SHAREPOINT_SITE_URL`
@@ -67,25 +90,34 @@ Optional:
   - `VIGILANCE_SHAREPOINT_WORKBOOK_PATH`
 - optional `VIGILANCE_SHAREPOINT_WORKSHEET_NAME` (default `ASSETS`)
 
-### One-time Azure/SharePoint setup
+### Entra app registration (high level)
 
-1. Register an app in Microsoft Entra ID.
-2. Create a client secret for the app registration.
-3. Grant **application** Microsoft Graph permissions (minimum typically includes `Sites.ReadWrite.All` and `Files.ReadWrite.All`) and grant admin consent.
-4. Ensure the app has access to the target SharePoint site/document library containing the workbook.
-5. Capture tenant/client IDs, and site/workbook identifiers (or workbook path).
+1. Register **API app** (the Flask API):
+   - Expose an API (Application ID URI, e.g. `api://<api-app-client-id>`)
+   - Define delegated scope(s), e.g. `access_as_user`
+2. Register **client app** (SPA/web/native calling Flask API):
+   - Request delegated permission to the Flask API scope
+3. Configure the Flask API app with Graph delegated permissions needed for workbook and file operations (for example `Files.ReadWrite`, `Sites.ReadWrite.All` as required by your tenancy policy).
+4. Grant tenant admin consent where required.
+5. Ensure users who call the API also have SharePoint permissions to the workbook location (`gft365.sharepoint.com` tenant).
 
-The backend authenticates via OAuth2 client-credentials against Microsoft Graph, then reads/writes the Excel workbook through Graph workbook endpoints.
-Workbook operations use explicit range reads/writes against the target `driveItem` and create a Graph workbook session (`/workbook/createSession`) to keep multi-step operations consistent.
+### End-to-end delegated/OBO flow
+
+1. User signs in to Entra ID and client obtains access token for **this API** (`aud=VIGILANCE_ENTRA_API_AUDIENCE`).
+2. Client calls Flask API with `Authorization: Bearer <api_token>`.
+3. Flask validates token against tenant + audience.
+4. Flask performs OBO token exchange against Entra token endpoint.
+5. Flask calls Microsoft Graph workbook APIs using the **delegated Graph token**.
+6. SharePoint authorization is enforced by Graph using the signed-in user’s permissions.
+
+Result: only authenticated users with workbook access can read/write assets.
 
 ### Addressing the workbook (`driveItem`)
 
 You can target the workbook in either mode:
 
-- **Direct item mode**: provide `VIGILANCE_SHAREPOINT_SITE_ID` (+ optional `VIGILANCE_SHAREPOINT_DRIVE_ID`) and `VIGILANCE_SHAREPOINT_ITEM_ID`
-- **Path mode**: provide `VIGILANCE_SHAREPOINT_SITE_ID` or `VIGILANCE_SHAREPOINT_SITE_URL`, plus `VIGILANCE_SHAREPOINT_WORKBOOK_PATH` (for example `Shared Documents/T2.3 inventory.xlsx`)
-
-The service resolves the workbook to a SharePoint document-library `driveItem`, then uses Microsoft Graph workbook APIs on that item.
+- **Direct item mode**: `SITE_ID` (+ optional `DRIVE_ID`) and `ITEM_ID`
+- **Path mode**: `SITE_ID` or `SITE_URL`, plus `WORKBOOK_PATH` (for example `Shared Documents/T2.3 inventory.xlsx`)
 
 ---
 
@@ -110,13 +142,16 @@ export VIGILANCE_GOOGLE_SERVICE_ACCOUNT_FILE=$PWD/secrets/google-service-account
 python app.py
 ```
 
-### Local run (SharePoint)
+### Local run (SharePoint + Entra OBO)
 
 ```bash
 export VIGILANCE_STORAGE_BACKEND=sharepoint
-export VIGILANCE_SHAREPOINT_TENANT_ID=your_tenant_id
-export VIGILANCE_SHAREPOINT_CLIENT_ID=your_client_id
-export VIGILANCE_SHAREPOINT_CLIENT_SECRET=your_client_secret
+export VIGILANCE_AUTH_MODE=entra_obo
+export VIGILANCE_ENTRA_TENANT_ID=your_tenant_id
+export VIGILANCE_ENTRA_CLIENT_ID=your_api_app_client_id
+export VIGILANCE_ENTRA_CLIENT_SECRET=your_api_app_client_secret
+export VIGILANCE_ENTRA_API_AUDIENCE=api://your_api_app_client_id
+export VIGILANCE_GRAPH_SCOPES="https://graph.microsoft.com/.default"
 export VIGILANCE_SHAREPOINT_SITE_ID=your_site_id
 export VIGILANCE_SHAREPOINT_ITEM_ID=your_workbook_item_id
 export VIGILANCE_SHAREPOINT_WORKSHEET_NAME=ASSETS
@@ -131,24 +166,17 @@ Build:
 docker build -t vigilance-assets .
 ```
 
-### Docker run (Google Sheets)
-
-```bash
-docker run --rm -p 8000:8000 \
-  -e VIGILANCE_STORAGE_BACKEND=google_sheets \
-  -e VIGILANCE_GOOGLE_SPREADSHEET_ID=your_spreadsheet_id \
-  -e VIGILANCE_GOOGLE_SERVICE_ACCOUNT_JSON="$(cat ./secrets/google-service-account.json)" \
-  vigilance-assets
-```
-
-### Docker run (SharePoint)
+### Docker run (SharePoint + OBO)
 
 ```bash
 docker run --rm -p 8000:8000 \
   -e VIGILANCE_STORAGE_BACKEND=sharepoint \
-  -e VIGILANCE_SHAREPOINT_TENANT_ID=your_tenant_id \
-  -e VIGILANCE_SHAREPOINT_CLIENT_ID=your_client_id \
-  -e VIGILANCE_SHAREPOINT_CLIENT_SECRET=your_client_secret \
+  -e VIGILANCE_AUTH_MODE=entra_obo \
+  -e VIGILANCE_ENTRA_TENANT_ID=your_tenant_id \
+  -e VIGILANCE_ENTRA_CLIENT_ID=your_api_app_client_id \
+  -e VIGILANCE_ENTRA_CLIENT_SECRET=your_api_app_client_secret \
+  -e VIGILANCE_ENTRA_API_AUDIENCE=api://your_api_app_client_id \
+  -e VIGILANCE_GRAPH_SCOPES="https://graph.microsoft.com/.default" \
   -e VIGILANCE_SHAREPOINT_SITE_ID=your_site_id \
   -e VIGILANCE_SHAREPOINT_ITEM_ID=your_workbook_item_id \
   -e VIGILANCE_SHAREPOINT_WORKSHEET_NAME=ASSETS \
