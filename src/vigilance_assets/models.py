@@ -71,6 +71,7 @@ class DataStreamFields(CategorySpecificFields):
     Frequency: str | None = None
     Data_Sensitivity: str | None = None
     Sharing_Policy: str | None = None
+    Data_Origin: str | None = None
 
 
 @dataclass(slots=True)

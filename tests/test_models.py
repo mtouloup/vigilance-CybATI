@@ -25,6 +25,12 @@ class AssetModelTests(unittest.TestCase):
         self.assertEqual(asset.to_dict()["Asset_Subtype"], "PLC")
         self.assertEqual(asset.to_dict()["Asset_ID"], "AST-202")
 
+    def test_to_dict_round_trips_telemetry_data_origin_field(self) -> None:
+        payload = asset_payload("Data Stream / Data Source / Telemetry", asset_id="AST-203")
+        asset = build_asset_record(payload)
+
+        self.assertEqual(asset.to_dict()["Data_Origin"], "Real-world")
+
     def test_normalize_last_updated_accepts_date_and_naive_datetime(self) -> None:
         normalized_date = normalize_last_updated(date(2026, 3, 21))
         normalized_datetime = normalize_last_updated(datetime(2026, 3, 21, 8, 15))
