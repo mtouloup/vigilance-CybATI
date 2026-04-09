@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 
 from .auth import EntraOboTokenBroker, RequestScopedGraphTokenProvider, configure_auth
 from .config import AppRuntimeSettings, load_runtime_settings
@@ -71,6 +72,10 @@ def create_runtime_app():
     configure_auth(app, settings)
     app.config["RUNTIME_SETTINGS"] = settings
     app.config.setdefault("SWAGGER_UI_URL", "/docs")
+    app.config["SWAGGER_USE_OAUTH"] = settings.swagger_use_oauth
+    app.config["SWAGGER_OAUTH_TENANT_ID"] = settings.swagger_entra_tenant_id
+    app.config["SWAGGER_OAUTH_CLIENT_ID"] = settings.swagger_entra_client_id
+    app.config["SWAGGER_OAUTH_SCOPES"] = tuple(scope for scope in re.split(r"[\s,]+", settings.swagger_entra_api_scope or "") if scope)
 
     LOGGER.info(
         "Startup mode: storage_backend=%s auth_mode=%s sharepoint_worksheet=%s",

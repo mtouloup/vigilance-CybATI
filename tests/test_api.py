@@ -277,6 +277,15 @@ class ApiTests(unittest.TestCase):
         self.assertIn('/vocabularies/{name}', payload['paths'])
         self.assertIn('/schema/assets/{category}', payload['paths'])
         self.assertEqual(payload['paths']['/assets/{asset_id}']['delete']['parameters'][1]['schema']['default'], 'archive')
+        self.assertIn('bearerAuth', payload['components']['securitySchemes'])
+        self.assertEqual(payload['paths']['/assets']['get']['security'], [{'bearerAuth': []}])
+
+    def test_swagger_json_alias_serves_openapi_document(self) -> None:
+        response = self.client.get('/swagger.json')
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertEqual(payload['openapi'], '3.0.3')
 
     def test_docs_endpoint_serves_swagger_ui_html_with_configured_spec_url(self) -> None:
         self.client.application.config['OPENAPI_SPEC_URL'] = '/custom/openapi.json'
@@ -288,6 +297,37 @@ class ApiTests(unittest.TestCase):
         self.assertIn('SwaggerUIBundle', html)
         self.assertIn("/custom/openapi.json", html)
 
+    def test_docs_includes_oauth_init_when_enabled(self) -> None:
+        app = self.client.application
+        app.config['SWAGGER_USE_OAUTH'] = True
+        app.config['SWAGGER_OAUTH_TENANT_ID'] = 'tenant-id'
+        app.config['SWAGGER_OAUTH_CLIENT_ID'] = 'client-id'
+        app.config['SWAGGER_OAUTH_SCOPES'] = ('api://asset-api/access_as_user',)
+
+        response = self.client.get('/docs')
+
+        self.assertEqual(response.status_code, 200)
+        html = response.get_data(as_text=True)
+        self.assertIn('initOAuth', html)
+        self.assertIn('client-id', html)
+
+    def test_openapi_includes_entra_oauth2_scheme_when_enabled(self) -> None:
+        app = self.client.application
+        app.config['SWAGGER_USE_OAUTH'] = True
+        app.config['SWAGGER_OAUTH_TENANT_ID'] = 'tenant-id'
+        app.config['SWAGGER_OAUTH_CLIENT_ID'] = 'client-id'
+        app.config['SWAGGER_OAUTH_SCOPES'] = ('api://asset-api/access_as_user',)
+
+        response = self.client.get('/openapi.json')
+
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertIn('entraOAuth2', payload['components']['securitySchemes'])
+        self.assertEqual(
+            payload['components']['securitySchemes']['entraOAuth2']['flows']['authorizationCode']['tokenUrl'],
+            'https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token',
+        )
+
     def test_create_app_registers_expected_blueprints(self) -> None:
         rules = {rule.rule for rule in self.client.application.url_map.iter_rules()}
 
@@ -295,6 +335,7 @@ class ApiTests(unittest.TestCase):
         self.assertIn('/vocabularies', rules)
         self.assertIn('/schema/assets', rules)
         self.assertIn('/openapi.json', rules)
+        self.assertIn('/swagger.json', rules)
         self.assertIn('/docs', rules)
         self.assertIn('/swaggerui/<path:filename>', rules)
 
