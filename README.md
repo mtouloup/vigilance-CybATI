@@ -76,6 +76,16 @@ Optional:
 5. Capture tenant/client IDs, and site/workbook identifiers (or workbook path).
 
 The backend authenticates via OAuth2 client-credentials against Microsoft Graph, then reads/writes the Excel workbook through Graph workbook endpoints.
+Workbook operations use explicit range reads/writes against the target `driveItem` and create a Graph workbook session (`/workbook/createSession`) to keep multi-step operations consistent.
+
+### Addressing the workbook (`driveItem`)
+
+You can target the workbook in either mode:
+
+- **Direct item mode**: provide `VIGILANCE_SHAREPOINT_SITE_ID` (+ optional `VIGILANCE_SHAREPOINT_DRIVE_ID`) and `VIGILANCE_SHAREPOINT_ITEM_ID`
+- **Path mode**: provide `VIGILANCE_SHAREPOINT_SITE_ID` or `VIGILANCE_SHAREPOINT_SITE_URL`, plus `VIGILANCE_SHAREPOINT_WORKBOOK_PATH` (for example `Shared Documents/T2.3 inventory.xlsx`)
+
+The service resolves the workbook to a SharePoint document-library `driveItem`, then uses Microsoft Graph workbook APIs on that item.
 
 ---
 
@@ -141,6 +151,7 @@ docker run --rm -p 8000:8000 \
   -e VIGILANCE_SHAREPOINT_CLIENT_SECRET=your_client_secret \
   -e VIGILANCE_SHAREPOINT_SITE_ID=your_site_id \
   -e VIGILANCE_SHAREPOINT_ITEM_ID=your_workbook_item_id \
+  -e VIGILANCE_SHAREPOINT_WORKSHEET_NAME=ASSETS \
   vigilance-assets
 ```
 
