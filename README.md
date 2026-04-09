@@ -90,13 +90,15 @@ Optional:
   - `VIGILANCE_SHAREPOINT_WORKBOOK_PATH`
 - optional `VIGILANCE_SHAREPOINT_WORKSHEET_NAME` (default `ASSETS`)
 
-### Entra app registration (high level)
+### Entra app registrations (high level)
 
 1. Register **API app** (the Flask API):
    - Expose an API (Application ID URI, e.g. `api://<api-app-client-id>`)
    - Define delegated scope(s), e.g. `access_as_user`
-2. Register **client app** (SPA/web/native calling Flask API):
-   - Request delegated permission to the Flask API scope
+2. Register **Swagger client app** (dedicated for `/docs` sign-in):
+   - Add redirect URI: `http://localhost:8000/swaggerui/oauth2-redirect.html` (and your deployed `/swaggerui/oauth2-redirect.html` URL)
+   - Allow public client/browser auth code + PKCE as required by your tenant policy
+   - Request delegated permission to the Flask API scope (`api://<api-app-client-id>/access_as_user`)
 3. Configure the Flask API app with Graph delegated permissions needed for workbook and file operations (for example `Files.ReadWrite`, `Sites.ReadWrite.All` as required by your tenancy policy).
 4. Grant tenant admin consent where required.
 5. Ensure users who call the API also have SharePoint permissions to the workbook location (`gft365.sharepoint.com` tenant).
@@ -154,6 +156,9 @@ export VIGILANCE_ENTRA_CLIENT_ID=your_api_app_client_id
 export VIGILANCE_ENTRA_CLIENT_SECRET=your_api_app_client_secret
 export VIGILANCE_ENTRA_API_AUDIENCE=api://your_api_app_client_id
 export VIGILANCE_GRAPH_SCOPES="https://graph.microsoft.com/.default"
+export VIGILANCE_SWAGGER_USE_OAUTH=true
+export VIGILANCE_SWAGGER_CLIENT_ID=your_swagger_client_app_id
+export VIGILANCE_ENTRA_API_SCOPE=api://your_api_app_client_id/access_as_user
 export VIGILANCE_SHAREPOINT_SITE_ID=your_site_id
 export VIGILANCE_SHAREPOINT_ITEM_ID=your_workbook_item_id
 export VIGILANCE_SHAREPOINT_WORKSHEET_NAME=ASSETS
@@ -179,6 +184,9 @@ docker run --rm -p 8000:8000 \
   -e VIGILANCE_ENTRA_CLIENT_SECRET=your_api_app_client_secret \
   -e VIGILANCE_ENTRA_API_AUDIENCE=api://your_api_app_client_id \
   -e VIGILANCE_GRAPH_SCOPES="https://graph.microsoft.com/.default" \
+  -e VIGILANCE_SWAGGER_USE_OAUTH=true \
+  -e VIGILANCE_SWAGGER_CLIENT_ID=your_swagger_client_app_id \
+  -e VIGILANCE_ENTRA_API_SCOPE=api://your_api_app_client_id/access_as_user \
   -e VIGILANCE_SHAREPOINT_SITE_ID=your_site_id \
   -e VIGILANCE_SHAREPOINT_ITEM_ID=your_workbook_item_id \
   -e VIGILANCE_SHAREPOINT_WORKSHEET_NAME=ASSETS \
@@ -202,13 +210,15 @@ docker compose up --build
 
 `/docs` and `/openapi.json` stay public so users can reach Swagger before signing in.
 
-Enable OAuth in Swagger UI with:
+Swagger UI is the supported interactive sign-in surface for this API. Configure OAuth in Swagger UI with:
 
 - `VIGILANCE_SWAGGER_USE_OAUTH=true`
 - `VIGILANCE_ENTRA_TENANT_ID`
-- `VIGILANCE_ENTRA_CLIENT_ID`
+- `VIGILANCE_SWAGGER_CLIENT_ID` (dedicated Swagger client app registration)
 - `VIGILANCE_ENTRA_API_SCOPE` (or `VIGILANCE_ENTRA_API_SCOPES`)
 - optional `VIGILANCE_ENTRA_AUTHORIZATION_URL`
 - optional `VIGILANCE_ENTRA_TOKEN_URL`
 
-When enabled, OpenAPI publishes an OAuth2 `authorizationCode` scheme and Swagger shows **Authorize**. Swagger acquires an access token for this API scope (not Graph) and sends it as bearer auth to protected endpoints.
+When enabled, OpenAPI publishes only an OAuth2 `authorizationCode` security scheme and Swagger shows **Authorize**. Swagger performs Microsoft Entra authorization-code flow with PKCE, acquires an access token for this API scope (not Graph), and automatically sends bearer auth to protected endpoints.
+
+The API validates that incoming API token, then runs OAuth 2.0 OBO to obtain a delegated Microsoft Graph token for workbook calls. SharePoint workbook authorization is therefore enforced by the signed-in user’s Microsoft 365 permissions.

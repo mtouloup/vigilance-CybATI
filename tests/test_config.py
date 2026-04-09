@@ -96,7 +96,7 @@ class ConfigTests(unittest.TestCase):
                 'VIGILANCE_GOOGLE_READ_ONLY_PUBLIC': 'true',
                 'VIGILANCE_SWAGGER_USE_OAUTH': 'true',
                 'VIGILANCE_ENTRA_TENANT_ID': 'tenant-id',
-                'VIGILANCE_ENTRA_CLIENT_ID': 'client-id',
+                'VIGILANCE_SWAGGER_CLIENT_ID': 'swagger-client-id',
                 'VIGILANCE_ENTRA_API_SCOPE': 'api://asset-api/access_as_user',
                 'VIGILANCE_ENTRA_AUTHORIZATION_URL': 'https://login.microsoftonline.com/tenant-id/oauth2/v2.0/authorize',
                 'VIGILANCE_ENTRA_TOKEN_URL': 'https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token',
@@ -105,11 +105,23 @@ class ConfigTests(unittest.TestCase):
 
         self.assertTrue(settings.swagger_use_oauth)
         self.assertEqual(settings.swagger_entra_tenant_id, 'tenant-id')
-        self.assertEqual(settings.swagger_entra_client_id, 'client-id')
-        self.assertEqual(settings.swagger_entra_api_scope, 'api://asset-api/access_as_user')
+        self.assertEqual(settings.swagger_client_id, 'swagger-client-id')
+        self.assertEqual(settings.swagger_api_scope, 'api://asset-api/access_as_user')
         self.assertEqual(settings.swagger_oauth_scopes, ('api://asset-api/access_as_user',))
         self.assertEqual(settings.swagger_oauth_authorization_url, 'https://login.microsoftonline.com/tenant-id/oauth2/v2.0/authorize')
         self.assertEqual(settings.swagger_oauth_token_url, 'https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token')
+
+    def test_load_runtime_settings_swagger_oauth_requires_dedicated_swagger_client(self) -> None:
+        with self.assertRaisesRegex(ConfigurationError, 'VIGILANCE_SWAGGER_CLIENT_ID'):
+            load_runtime_settings(
+                {
+                    'VIGILANCE_GOOGLE_SPREADSHEET_ID': 'sheet-123',
+                    'VIGILANCE_GOOGLE_READ_ONLY_PUBLIC': 'true',
+                    'VIGILANCE_SWAGGER_USE_OAUTH': 'true',
+                    'VIGILANCE_ENTRA_TENANT_ID': 'tenant-id',
+                    'VIGILANCE_ENTRA_API_SCOPE': 'api://asset-api/access_as_user',
+                }
+            )
 
     def test_create_repository_from_settings_uses_google_sheets_backend(self) -> None:
         settings = AppRuntimeSettings(

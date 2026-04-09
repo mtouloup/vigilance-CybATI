@@ -102,8 +102,8 @@ class AppRuntimeSettings:
     auth_public_paths: tuple[str, ...] = DEFAULT_AUTH_PUBLIC_PATHS
     swagger_use_oauth: bool = DEFAULT_SWAGGER_USE_OAUTH
     swagger_entra_tenant_id: str | None = None
-    swagger_entra_client_id: str | None = None
-    swagger_entra_api_scope: str | None = None
+    swagger_client_id: str | None = None
+    swagger_api_scope: str | None = None
     swagger_oauth_authorization_url: str | None = None
     swagger_oauth_token_url: str | None = None
     swagger_oauth_scopes: tuple[str, ...] = ()
@@ -122,6 +122,18 @@ class AppRuntimeSettings:
                 f"Unsupported VIGILANCE_STORAGE_BACKEND value: {self.storage_backend}. "
                 "Supported values: google_sheets, sharepoint."
             )
+
+        if self.swagger_use_oauth:
+            if not self.swagger_entra_tenant_id:
+                raise ConfigurationError("VIGILANCE_SWAGGER_USE_OAUTH=true requires VIGILANCE_ENTRA_TENANT_ID.")
+            if not self.swagger_client_id:
+                raise ConfigurationError(
+                    "VIGILANCE_SWAGGER_USE_OAUTH=true requires VIGILANCE_SWAGGER_CLIENT_ID."
+                )
+            if not self.swagger_oauth_scopes:
+                raise ConfigurationError(
+                    "VIGILANCE_SWAGGER_USE_OAUTH=true requires VIGILANCE_ENTRA_API_SCOPE (or VIGILANCE_ENTRA_API_SCOPES)."
+                )
 
         if self.auth_mode == "none":
             return
@@ -167,8 +179,8 @@ def load_runtime_settings(env: Mapping[str, str] | None = None) -> AppRuntimeSet
         auth_public_paths=_read_auth_public_paths(values),
         swagger_use_oauth=_read_bool(values, "SWAGGER_USE_OAUTH", default=DEFAULT_SWAGGER_USE_OAUTH),
         swagger_entra_tenant_id=_read_optional_str(values, "ENTRA_TENANT_ID"),
-        swagger_entra_client_id=_read_optional_str(values, "ENTRA_CLIENT_ID"),
-        swagger_entra_api_scope=_read_optional_str(values, "ENTRA_API_SCOPE"),
+        swagger_client_id=_read_optional_str(values, "SWAGGER_CLIENT_ID") or _read_optional_str(values, "ENTRA_CLIENT_ID"),
+        swagger_api_scope=_read_optional_str(values, "ENTRA_API_SCOPE"),
         swagger_oauth_authorization_url=_read_optional_str(values, "ENTRA_AUTHORIZATION_URL"),
         swagger_oauth_token_url=_read_optional_str(values, "ENTRA_TOKEN_URL"),
         swagger_oauth_scopes=_read_api_scopes(values),

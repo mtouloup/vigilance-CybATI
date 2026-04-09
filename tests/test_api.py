@@ -277,8 +277,8 @@ class ApiTests(unittest.TestCase):
         self.assertIn('/vocabularies/{name}', payload['paths'])
         self.assertIn('/schema/assets/{category}', payload['paths'])
         self.assertEqual(payload['paths']['/assets/{asset_id}']['delete']['parameters'][1]['schema']['default'], 'archive')
-        self.assertIn('bearerAuth', payload['components']['securitySchemes'])
-        self.assertEqual(payload['paths']['/assets']['get']['security'], [{'bearerAuth': []}])
+        self.assertNotIn('bearerAuth', payload['components']['securitySchemes'])
+        self.assertEqual(payload['paths']['/assets']['get']['security'], [])
 
     def test_swagger_json_alias_serves_openapi_document(self) -> None:
         response = self.client.get('/swagger.json')
@@ -300,8 +300,8 @@ class ApiTests(unittest.TestCase):
     def test_docs_includes_oauth_init_when_enabled(self) -> None:
         app = self.client.application
         app.config['SWAGGER_USE_OAUTH'] = True
-        app.config['SWAGGER_OAUTH_TENANT_ID'] = 'tenant-id'
-        app.config['SWAGGER_OAUTH_CLIENT_ID'] = 'client-id'
+        app.config['SWAGGER_ENTRA_TENANT_ID'] = 'tenant-id'
+        app.config['SWAGGER_CLIENT_ID'] = 'client-id'
         app.config['SWAGGER_OAUTH_SCOPES'] = ('api://asset-api/access_as_user',)
 
         response = self.client.get('/docs')
@@ -310,12 +310,14 @@ class ApiTests(unittest.TestCase):
         html = response.get_data(as_text=True)
         self.assertIn('initOAuth', html)
         self.assertIn('client-id', html)
+        self.assertIn('usePkceWithAuthorizationCodeGrant: true', html)
+        self.assertIn('/swaggerui/oauth2-redirect.html', html)
 
     def test_openapi_includes_entra_oauth2_scheme_when_enabled(self) -> None:
         app = self.client.application
         app.config['SWAGGER_USE_OAUTH'] = True
-        app.config['SWAGGER_OAUTH_TENANT_ID'] = 'tenant-id'
-        app.config['SWAGGER_OAUTH_CLIENT_ID'] = 'client-id'
+        app.config['SWAGGER_ENTRA_TENANT_ID'] = 'tenant-id'
+        app.config['SWAGGER_CLIENT_ID'] = 'client-id'
         app.config['SWAGGER_OAUTH_SCOPES'] = ('api://asset-api/access_as_user',)
 
         response = self.client.get('/openapi.json')

@@ -120,8 +120,8 @@ class ApiAuthTests(unittest.TestCase):
         client, _ = self._build_client()
         app = client.application
         app.config['SWAGGER_USE_OAUTH'] = True
-        app.config['SWAGGER_OAUTH_TENANT_ID'] = 'tenant-id'
-        app.config['SWAGGER_OAUTH_CLIENT_ID'] = 'client-id'
+        app.config['SWAGGER_ENTRA_TENANT_ID'] = 'tenant-id'
+        app.config['SWAGGER_CLIENT_ID'] = 'client-id'
         app.config['SWAGGER_OAUTH_SCOPES'] = ('api://asset-api/access_as_user',)
         app.config['SWAGGER_OAUTH_AUTHORIZATION_URL'] = 'https://login.microsoftonline.com/tenant-id/oauth2/v2.0/authorize'
         app.config['SWAGGER_OAUTH_TOKEN_URL'] = 'https://login.microsoftonline.com/tenant-id/oauth2/v2.0/token'
@@ -134,6 +134,7 @@ class ApiAuthTests(unittest.TestCase):
         scheme = document['components']['securitySchemes']['entraOAuth2']
         self.assertEqual(scheme['type'], 'oauth2')
         self.assertIn('authorizationCode', scheme['flows'])
+        self.assertNotIn('bearerAuth', document['components']['securitySchemes'])
         assets_get = document['paths']['/assets']['get']
         self.assertEqual(assets_get['security'], [{'entraOAuth2': ['api://asset-api/access_as_user']}])
 

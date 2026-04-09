@@ -73,9 +73,9 @@ def create_runtime_app():
     app.config["RUNTIME_SETTINGS"] = settings
     app.config.setdefault("SWAGGER_UI_URL", "/docs")
     app.config["SWAGGER_USE_OAUTH"] = settings.swagger_use_oauth
-    app.config["SWAGGER_OAUTH_TENANT_ID"] = settings.swagger_entra_tenant_id
-    app.config["SWAGGER_OAUTH_CLIENT_ID"] = settings.swagger_entra_client_id
-    app.config["SWAGGER_OAUTH_API_SCOPE"] = settings.swagger_entra_api_scope
+    app.config["SWAGGER_ENTRA_TENANT_ID"] = settings.swagger_entra_tenant_id
+    app.config["SWAGGER_CLIENT_ID"] = settings.swagger_client_id
+    app.config["SWAGGER_API_SCOPE"] = settings.swagger_api_scope
     app.config["SWAGGER_OAUTH_SCOPES"] = settings.swagger_oauth_scopes
     app.config["SWAGGER_OAUTH_AUTHORIZATION_URL"] = settings.swagger_oauth_authorization_url
     app.config["SWAGGER_OAUTH_TOKEN_URL"] = settings.swagger_oauth_token_url

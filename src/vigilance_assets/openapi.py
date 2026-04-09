@@ -6,6 +6,7 @@ from typing import Any
 from flask import Blueprint, Response, current_app
 from .blueprints import DELETE_MODES
 from .schema import AssetSchemaCatalog, FieldDefinition
+from .swagger_oauth import SwaggerOAuthConfig, resolve_swagger_oauth_config
 
 openapi_bp = Blueprint('openapi', __name__)
 
@@ -27,13 +28,13 @@ def swagger_ui() -> str:
     spec_url = current_app.config.get('OPENAPI_SPEC_URL', '/openapi.json')
     swagger_js = '/swaggerui/swagger-ui-bundle.js'
     swagger_css = '/swaggerui/swagger-ui.css'
-    oauth_config = _swagger_oauth_ui_config(current_app)
+    oauth_config = resolve_swagger_oauth_config(current_app.config)
     oauth_init_script = ""
-    if oauth_config["enabled"]:
+    if oauth_config.enabled:
         oauth_init_script = f"""
       window.ui.initOAuth({{
-        clientId: '{oauth_config["client_id"]}',
-        scopes: '{oauth_config["scopes"]}',
+        clientId: '{oauth_config.client_id}',
+        scopes: '{oauth_config.scopes_string}',
         usePkceWithAuthorizationCodeGrant: true
       }});"""
     return f"""<!doctype html>
@@ -51,6 +52,7 @@ def swagger_ui() -> str:
       window.ui = SwaggerUIBundle({{
         url: '{spec_url}',
         dom_id: '#swagger-ui',
+        oauth2RedirectUrl: `${{window.location.origin}}/swaggerui/oauth2-redirect.html`,
         deepLinking: true,
         presets: [SwaggerUIBundle.presets.apis],
         layout: 'BaseLayout'
@@ -67,9 +69,9 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
     asset_schema_name = 'AssetPayload'
     patch_schema_name = 'AssetPatchPayload'
 
-    oauth_config = _swagger_oauth_ui_config(app)
-    security_schemes = _security_schemes(app, oauth_config)
-    secured_operation = {'security': _secured_operation_security(oauth_config)}
+    oauth_config = resolve_swagger_oauth_config(app.config)
+    security_schemes = _security_schemes(oauth_config)
+    secured_operation = {'security': oauth_config.as_openapi_security()}
     return {
         'openapi': '3.0.3',
         'info': {
@@ -78,7 +80,7 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
             'description': 'Blueprint-organized Flask API over the canonical VIGILANCE asset schema.',
         },
         'servers': [{'url': server_url}],
-        'security': _secured_operation_security(oauth_config),
+        'security': oauth_config.as_openapi_security(),
         'tags': [
             {'name': 'Assets', 'description': 'CRUD, search, pagination, and quality reporting for assets.'},
             {'name': 'Vocabularies', 'description': 'Controlled vocabulary discovery endpoints.'},
@@ -191,50 +193,20 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
     }
 
 
-def _secured_operation_security(oauth_config: dict[str, Any]) -> list[dict[str, Any]]:
-    if oauth_config["enabled"]:
-        return [{"entraOAuth2": oauth_config["scopes_list"]}]
-    return [{"bearerAuth": []}]
-
-
-def _security_schemes(app: Any, oauth_config: dict[str, Any]) -> dict[str, Any]:
-    schemes: dict[str, Any] = {'bearerAuth': {'type': 'http', 'scheme': 'bearer', 'bearerFormat': 'JWT'}}
-    if oauth_config["enabled"]:
+def _security_schemes(oauth_config: SwaggerOAuthConfig) -> dict[str, Any]:
+    schemes: dict[str, Any] = {}
+    if oauth_config.enabled:
         schemes['entraOAuth2'] = {
             'type': 'oauth2',
             'flows': {
                 'authorizationCode': {
-                    'authorizationUrl': oauth_config['authorization_url'],
-                    'tokenUrl': oauth_config['token_url'],
-                    'scopes': {scope: f'Access scope for {scope}' for scope in oauth_config['scopes_list']},
+                    'authorizationUrl': oauth_config.authorization_url,
+                    'tokenUrl': oauth_config.token_url,
+                    'scopes': {scope: f'Access scope for {scope}' for scope in oauth_config.scopes},
                 }
             },
         }
     return schemes
-
-
-def _swagger_oauth_ui_config(app: Any) -> dict[str, Any]:
-    enabled = bool(app.config.get('SWAGGER_USE_OAUTH'))
-    tenant_id = str(app.config.get('SWAGGER_OAUTH_TENANT_ID') or '').strip()
-    client_id = str(app.config.get('SWAGGER_OAUTH_CLIENT_ID') or '').strip()
-    scopes = [scope for scope in app.config.get('SWAGGER_OAUTH_SCOPES', ()) if isinstance(scope, str) and scope.strip()]
-    authorization_url = str(app.config.get('SWAGGER_OAUTH_AUTHORIZATION_URL') or '').strip()
-    token_url = str(app.config.get('SWAGGER_OAUTH_TOKEN_URL') or '').strip()
-    if not authorization_url or not token_url:
-        authority_root = f'https://login.microsoftonline.com/{tenant_id}/oauth2/v2.0'
-        authorization_url = authorization_url or f'{authority_root}/authorize'
-        token_url = token_url or f'{authority_root}/token'
-    if not (enabled and tenant_id and client_id and scopes and authorization_url and token_url):
-        return {'enabled': False}
-    return {
-        'enabled': True,
-        'tenant_id': tenant_id,
-        'client_id': client_id,
-        'scopes': ' '.join(scopes),
-        'scopes_list': scopes,
-        'authorization_url': authorization_url,
-        'token_url': token_url,
-    }
 
 
 def _components(catalog: AssetSchemaCatalog) -> dict[str, Any]:
