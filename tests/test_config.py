@@ -79,6 +79,16 @@ class ConfigTests(unittest.TestCase):
         )
         self.assertTrue(settings.google_sheets.read_only_public_fallback)
 
+    def test_load_runtime_settings_supports_custom_auth_public_paths(self) -> None:
+        settings = load_runtime_settings(
+            {
+                'VIGILANCE_GOOGLE_SPREADSHEET_ID': 'sheet-123',
+                'VIGILANCE_GOOGLE_READ_ONLY_PUBLIC': 'true',
+                'VIGILANCE_AUTH_PUBLIC_PATHS': '/docs,/openapi.json,/health',
+            }
+        )
+        self.assertEqual(settings.auth_public_paths, ('/docs', '/openapi.json', '/health'))
+
     def test_create_repository_from_settings_uses_google_sheets_backend(self) -> None:
         settings = AppRuntimeSettings(
             storage_backend='google_sheets',
