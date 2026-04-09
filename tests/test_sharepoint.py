@@ -130,6 +130,10 @@ class SharePointGatewayTests(unittest.TestCase):
         self.assertEqual(sent_values[tool_idx + 1], '')
         self.assertEqual(sent_values[service_idx + 1], '')
 
+    def test_mapper_orders_data_origin_after_sharing_policy(self) -> None:
+        headers = list(self.mapper.ordered_headers)
+        self.assertGreater(headers.index('Data_Origin'), headers.index('Sharing_Policy'))
+
 
 if __name__ == '__main__':
     unittest.main()

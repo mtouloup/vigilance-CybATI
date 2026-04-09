@@ -33,6 +33,12 @@ class AssetValidatorTests(unittest.TestCase):
             self.validator.validate_for_create(payload)
         self.assertTrue(any(issue.field == "Status" and issue.code == "invalid_choice" for issue in exc.exception.issues))
 
+    def test_rejects_invalid_data_origin_value_for_telemetry_assets(self) -> None:
+        payload = asset_payload("Data Stream / Data Source / Telemetry", Data_Origin="Synthetic")
+        with self.assertRaises(ValidationError) as exc:
+            self.validator.validate_for_create(payload)
+        self.assertTrue(any(issue.field == "Data_Origin" and issue.code == "invalid_choice" for issue in exc.exception.issues))
+
     def test_rejects_trl_out_of_range(self) -> None:
         payload = asset_payload("Compute Resource", TRL_Start=10)
         with self.assertRaises(ValidationError) as exc:
@@ -55,6 +61,12 @@ class AssetValidatorTests(unittest.TestCase):
         with self.assertRaises(ValidationError) as exc:
             self.validator.validate_for_patch("Platform / Service", patch)
         self.assertTrue(any(issue.field == "Tool_Type" and issue.code == "category_exclusive" for issue in exc.exception.issues))
+
+    def test_rejects_data_origin_on_non_telemetry_assets(self) -> None:
+        payload = asset_payload("Cybersecurity Tool", Data_Origin="Real-world")
+        with self.assertRaises(ValidationError) as exc:
+            self.validator.validate_for_create(payload)
+        self.assertTrue(any(issue.field == "Data_Origin" and issue.code == "category_exclusive" for issue in exc.exception.issues))
 
 
 if __name__ == "__main__":

@@ -267,8 +267,27 @@ Current controlled values:
 - `Confidential`
 - `N/A`
 
+### `Data_Origin`
+Explicitly captures whether telemetry/data streams originate from real-world operations, synthetic/simulated generation, or both.
+
+Current controlled values:
+- `Real-world`
+- `Synthetic / Simulated`
+- `Hybrid`
+- `N/A`
+
 Suggested minimum category-specific requirement:
 - `Telemetry_Type`
+
+Telemetry block order in the worksheet-backed schema is:
+1. `Telemetry_Type`
+2. `Data_Format`
+3. `Frequency`
+4. `Data_Sensitivity`
+5. `Sharing_Policy`
+6. `Data_Origin`
+
+Compatibility note: if the deployment reads/writes a live workbook, the `ASSETS` sheet header row must include `Data_Origin` immediately after `Sharing_Policy` to keep canonical header alignment intact.
 
 ---
 

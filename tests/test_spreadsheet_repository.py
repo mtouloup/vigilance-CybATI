@@ -213,6 +213,37 @@ class SpreadsheetRepositoryTests(unittest.TestCase):
         self.assertIsNone(row["Service_Type"])
         self.assertEqual(row["Purpose (1-2 sentences)"], "Aggregates threat findings for analysts.")
 
+    def test_telemetry_row_round_trip_includes_data_origin(self) -> None:
+        telemetry_asset = self.repository.mapper.payload_to_asset(
+            {
+                "Asset_ID": "AST-901",
+                "Asset_Name": "Telemetry feed",
+                "Asset_Category": "Data Stream / Data Source / Telemetry",
+                "Owner_Org": "OpenAI Security Lab",
+                "Owner_Contact": "ops@example.org",
+                "Pilot_s": "Pilot A",
+                "Purpose": "Streams telemetry data",
+                "Status": "Active",
+                "TRL_Start": 4,
+                "TRL_Target": 7,
+                "Related_Result": "RS3",
+                "Related_WP_Task": "T5.3",
+                "Deployment_Context": "Cloud",
+                "Last_Updated": "2026-03-21",
+                "Updated_By": "ops@example.org",
+                "Telemetry_Type": "Network flow telemetry",
+                "Sharing_Policy": "Consortium-internal",
+                "Data_Origin": "Hybrid",
+            }
+        )
+
+        row = self.repository.mapper.asset_to_row(telemetry_asset)
+        rebuilt = self.repository.mapper.row_to_payload(row)
+
+        self.assertEqual(row["Data_Origin"], "Hybrid")
+        self.assertEqual(rebuilt["Data_Origin"], "Hybrid")
+        self.assertEqual(rebuilt["Asset_Category"], "Data Stream / Data Source / Telemetry")
+
 
 if __name__ == "__main__":
     unittest.main()

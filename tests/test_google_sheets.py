@@ -379,6 +379,12 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
                 {'Compute_Form'},
                 {'Tool_Type', 'Service_Type'},
             ),
+            (
+                'Data Stream / Data Source / Telemetry',
+                {'Telemetry_Type': 'Network flow telemetry', 'Data_Origin': 'Hybrid'},
+                {'Telemetry_Type', 'Data_Origin'},
+                {'Tool_Type', 'Service_Type', 'Compute_Form'},
+            ),
         ]
         for category, category_values, expected_filled, expected_blank in cases:
             with self.subTest(category=category):
@@ -405,6 +411,10 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
                 self.assertTrue(separator_indexes)
                 for separator_index in separator_indexes:
                     self.assertEqual(sent_values[separator_index], '')
+
+    def test_mapper_orders_data_origin_after_sharing_policy(self) -> None:
+        headers = list(self.mapper.ordered_headers)
+        self.assertGreater(headers.index('Data_Origin'), headers.index('Sharing_Policy'))
 
     def test_append_row_anchors_to_first_canonical_column_when_sheet_has_leading_decorative_columns(self) -> None:
         gateway = GoogleSheetsTableGateway(settings=self.auth_settings, expected_headers=self.mapper.ordered_headers, api_service=Mock())

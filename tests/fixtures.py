@@ -54,6 +54,7 @@ CATEGORY_SPECIFICS: dict[str, dict[str, Any]] = {
         "Frequency": "real-time",
         "Data_Sensitivity": "Restricted",
         "Sharing_Policy": "Consortium-internal",
+        "Data_Origin": "Real-world",
     },
     "Data Store / Message Backbone": {
         "Store_Type": "Message queue",

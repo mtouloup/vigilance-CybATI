@@ -183,10 +183,21 @@ def _components(catalog: AssetSchemaCatalog) -> dict[str, Any]:
     }
     asset_properties, asset_required = _payload_schema(catalog, include_required=True)
     patch_properties, _ = _payload_schema(catalog, include_required=False)
+    telemetry_example = _telemetry_asset_example(catalog)
     return {
-        'AssetPayload': {'type': 'object', 'properties': asset_properties, 'required': asset_required},
+        'AssetPayload': {
+            'type': 'object',
+            'properties': asset_properties,
+            'required': asset_required,
+            'example': telemetry_example,
+        },
         'AssetPatchPayload': {'type': 'object', 'properties': patch_properties, 'description': 'Partial asset update payload.'},
-        'Asset': {'type': 'object', 'properties': asset_properties, 'required': asset_required},
+        'Asset': {
+            'type': 'object',
+            'properties': asset_properties,
+            'required': asset_required,
+            'example': telemetry_example,
+        },
         'EnvelopeMeta': {'type': 'object', 'additionalProperties': True},
         'ErrorDetail': {'type': 'object', 'additionalProperties': True},
         'ErrorObject': {
@@ -286,6 +297,40 @@ def _field_to_schema(field: FieldDefinition, catalog: AssetSchemaCatalog) -> dic
     if not field.updatable:
         schema['readOnly'] = True
     return schema
+
+
+def _telemetry_asset_example(catalog: AssetSchemaCatalog) -> dict[str, Any]:
+    def _first(name: str, default: str) -> str:
+        values = catalog.vocabularies.get(name, ())
+        return values[0] if values else default
+
+    return {
+        'Asset_ID': 'AST-TELE-001',
+        'Asset_Name': 'Pilot Telemetry Stream',
+        'Asset_Category': 'Data Stream / Data Source / Telemetry',
+        'Owner_Org': 'OpenAI Security Lab',
+        'Owner_Contact': 'telemetry-owner@example.org',
+        'Pilot_s': 'Pilot A',
+        'Purpose': 'Ingests telemetry from pilot infrastructure and simulation inputs.',
+        'Status': _first('Status', 'Active'),
+        'TRL_Start': 4,
+        'TRL_Current': 5,
+        'TRL_Target': 7,
+        'Related_Result': 'RS3',
+        'Related_WP_Task': 'T5.3',
+        'Deployment_Context': _first('Deployment_Context', 'Cloud'),
+        'Standards_Compliance': 'IEC 62443',
+        'Security_Domain': _first('Security_Domain', 'Cloud Security'),
+        'Documentation_Link': 'https://example.org/assets/telemetry-stream',
+        'Last_Updated': '2026-03-21T10:00:00+00:00',
+        'Updated_By': 'telemetry-owner@example.org',
+        'Telemetry_Type': 'Network flow telemetry',
+        'Data_Format': 'JSON',
+        'Frequency': 'real-time',
+        'Data_Sensitivity': 'Restricted',
+        'Sharing_Policy': _first('Sharing_Policy', 'Consortium-internal'),
+        'Data_Origin': _first('Data_Origin', 'Real-world'),
+    }
 
 
 def _asset_list_parameters(catalog: AssetSchemaCatalog) -> list[dict[str, Any]]:
