@@ -4,6 +4,7 @@ from typing import Any
 
 from flask import Flask, send_from_directory
 
+from .auth import AuthenticationError, DownstreamTokenError
 from .blueprints import assets_bp, error_response, schema_bp, vocabularies_bp
 from .openapi import openapi_bp
 from .repository import (
@@ -40,6 +41,14 @@ def create_app(service: AssetService | None = None, *, repository: AssetReposito
     def swaggerui_static(filename: str):
         return send_from_directory(swagger_ui_path, filename)
 
+
+    @app.errorhandler(AuthenticationError)
+    def handle_authentication_error(error: AuthenticationError) -> Any:
+        return error_response(status=401, code='authentication_failed', message=str(error))
+
+    @app.errorhandler(DownstreamTokenError)
+    def handle_downstream_token_error(error: DownstreamTokenError) -> Any:
+        return error_response(status=502, code='downstream_auth_error', message=str(error))
     @app.errorhandler(AssetNotFoundError)
     def handle_not_found(error: AssetNotFoundError) -> Any:
         return error_response(status=404, code='asset_not_found', message=str(error))

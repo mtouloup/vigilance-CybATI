@@ -1,11 +1,14 @@
 """VIGILANCE asset inventory service package."""
 
 from .api import create_app
+from .auth import AuthContext, AuthenticationError, DownstreamTokenError, EntraJwtValidator, EntraOboTokenBroker
 from .config import (
     AppRuntimeSettings,
     ConfigurationError,
     DEFAULT_ASSETS_WORKSHEET,
+    DEFAULT_AUTH_MODE,
     DEFAULT_STORAGE_BACKEND,
+    EntraOboSettings,
     GoogleSheetsSettings,
     SharePointSettings,
     load_runtime_settings,
@@ -71,6 +74,8 @@ __all__ = [
     "AssetService",
     "AssetSort",
     "AssetSpreadsheetMapper",
+    "AuthContext",
+    "AuthenticationError",
     "AssetValidationSummary",
     "AssetValidator",
     "CategorySpecificFields",
@@ -79,10 +84,15 @@ __all__ = [
     "ConfigurationError",
     "CybersecurityToolFields",
     "DEFAULT_ASSETS_WORKSHEET",
+    "DEFAULT_AUTH_MODE",
     "DEFAULT_STORAGE_BACKEND",
     "DataStoreFields",
     "DataStreamFields",
+    "DownstreamTokenError",
+    "EntraOboSettings",
     "DuplicateAssetError",
+    "EntraJwtValidator",
+    "EntraOboTokenBroker",
     "GoogleSheetsConfigurationError",
     "GoogleSheetsConnectivityError",
     "GoogleSheetsReadOnlyError",

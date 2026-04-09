@@ -6,9 +6,9 @@ import re
 import unicodedata
 from dataclasses import dataclass
 from http import HTTPStatus
-from typing import Any, Mapping, Sequence
+from typing import Any, Callable, Mapping, Sequence
 from urllib.error import HTTPError, URLError
-from urllib.parse import quote, urlencode, urlparse
+from urllib.parse import quote, urlparse
 from urllib.request import Request, urlopen
 
 from .config import SharePointSettings
@@ -17,7 +17,6 @@ from .spreadsheet import RowData, SheetRecord, SpreadsheetBackendError, Spreadsh
 
 LOGGER = logging.getLogger(__name__)
 GRAPH_BASE_URL = "https://graph.microsoft.com/v1.0"
-GRAPH_SCOPE = "https://graph.microsoft.com/.default"
 
 
 class SharePointConfigurationError(SpreadsheetBackendError):
@@ -58,35 +57,8 @@ class HeaderSelection:
 
 @dataclass(slots=True)
 class GraphApiClient:
-    settings: SharePointSettings
+    access_token_provider: Callable[[], str]
     timeout_seconds: float = 20.0
-    _access_token: str | None = None
-
-    def _token(self) -> str:
-        if self._access_token is None:
-            self._access_token = self._request_access_token()
-        return self._access_token
-
-    def _request_access_token(self) -> str:
-        token_url = f"https://login.microsoftonline.com/{self.settings.tenant_id}/oauth2/v2.0/token"
-        body = urlencode(
-            {
-                "client_id": self.settings.client_id,
-                "client_secret": self.settings.client_secret,
-                "scope": GRAPH_SCOPE,
-                "grant_type": "client_credentials",
-            }
-        ).encode("utf-8")
-        request = Request(token_url, data=body, headers={"Content-Type": "application/x-www-form-urlencoded"})
-        try:
-            with urlopen(request, timeout=self.timeout_seconds) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except (HTTPError, URLError, TimeoutError) as exc:
-            raise SharePointConnectivityError("Failed to acquire Microsoft Graph access token.") from exc
-        token = payload.get("access_token")
-        if not isinstance(token, str) or not token.strip():
-            raise SharePointConfigurationError("Microsoft Graph token response did not include access_token.")
-        return token
 
     def get(self, path: str, *, headers: Mapping[str, str] | None = None) -> dict[str, Any]:
         return self._request_json("GET", path, headers=headers)
@@ -114,7 +86,7 @@ class GraphApiClient:
         url = f"{GRAPH_BASE_URL}{path}"
         data = None
         request_headers = {
-            "Authorization": f"Bearer {self._token()}",
+            "Authorization": f"Bearer {self.access_token_provider()}",
             "Accept": "application/json",
         }
         if headers:
@@ -472,7 +444,7 @@ class SharePointTableGateway(SpreadsheetTableGateway):
 
     def _graph(self) -> GraphApiClient:
         if self._graph_client is None:
-            self._graph_client = GraphApiClient(self.settings, timeout_seconds=self.timeout_seconds)
+            raise SharePointConfigurationError("SharePoint Graph client is not configured.")
         return self._graph_client
 
     def _workbook_request_headers(self) -> dict[str, str] | None:
@@ -545,7 +517,18 @@ def _extract_http_error_details(exc: HTTPError) -> str:
     return "; ".join(details)
 
 
-def build_sharepoint_gateway(settings: SharePointSettings, expected_headers: Sequence[str]) -> SharePointTableGateway:
-    gateway = SharePointTableGateway(settings=settings, expected_headers=expected_headers)
-    gateway.validate_connection()
+def build_sharepoint_gateway(
+    settings: SharePointSettings,
+    expected_headers: Sequence[str],
+    *,
+    graph_access_token_provider: Callable[[], str],
+    validate_on_startup: bool,
+) -> SharePointTableGateway:
+    gateway = SharePointTableGateway(
+        settings=settings,
+        expected_headers=expected_headers,
+        graph_client=GraphApiClient(graph_access_token_provider),
+    )
+    if validate_on_startup:
+        gateway.validate_connection()
     return gateway

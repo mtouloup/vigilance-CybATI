@@ -3,7 +3,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import patch
 
-from vigilance_assets import AppRuntimeSettings, GoogleSheetsSettings, SharePointSettings, create_repository_from_settings
+from vigilance_assets import AppRuntimeSettings, EntraOboSettings, GoogleSheetsSettings, SharePointSettings, create_repository_from_settings
 from vigilance_assets.google_sheets import GoogleSheetsConnectivityError, GoogleSheetsWorksheetError
 
 
@@ -12,7 +12,7 @@ class GoogleSheetsStartupBehaviorTests(unittest.TestCase):
         settings = AppRuntimeSettings(
             storage_backend='google_sheets',
             google_sheets=GoogleSheetsSettings(spreadsheet_id='sheet-123', service_account_json='{"type":"service_account"}'),
-            sharepoint=SharePointSettings(tenant_id='x', client_id='y', client_secret='z', site_id='s', item_id='i'),
+            sharepoint=SharePointSettings(site_id='s', item_id='i'),
         )
 
         with patch(
@@ -26,7 +26,7 @@ class GoogleSheetsStartupBehaviorTests(unittest.TestCase):
         settings = AppRuntimeSettings(
             storage_backend='google_sheets',
             google_sheets=GoogleSheetsSettings(spreadsheet_id='sheet-123', service_account_json='{"type":"service_account"}'),
-            sharepoint=SharePointSettings(tenant_id='x', client_id='y', client_secret='z', site_id='s', item_id='i'),
+            sharepoint=SharePointSettings(site_id='s', item_id='i'),
         )
 
         with patch(
@@ -35,6 +35,17 @@ class GoogleSheetsStartupBehaviorTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(GoogleSheetsConnectivityError, 'Failed to load spreadsheet metadata from the Google Sheets API'):
                 create_repository_from_settings(settings)
+
+    def test_sharepoint_startup_requires_entra_obo_mode(self) -> None:
+        settings = AppRuntimeSettings(
+            storage_backend='sharepoint',
+            auth_mode='none',
+            google_sheets=GoogleSheetsSettings(spreadsheet_id='sheet-123', read_only_public_fallback=True),
+            sharepoint=SharePointSettings(site_id='site-id', item_id='item-id'),
+        )
+
+        with self.assertRaisesRegex(ValueError, 'SharePoint backend requires VIGILANCE_AUTH_MODE=entra_obo'):
+            create_repository_from_settings(settings)
 
 
 if __name__ == '__main__':

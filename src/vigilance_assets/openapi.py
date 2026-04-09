@@ -59,6 +59,7 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
             'description': 'Blueprint-organized Flask API over the canonical VIGILANCE asset schema.',
         },
         'servers': [{'url': server_url}],
+        'security': [{'bearerAuth': []}],
         'tags': [
             {'name': 'Assets', 'description': 'CRUD, search, pagination, and quality reporting for assets.'},
             {'name': 'Vocabularies', 'description': 'Controlled vocabulary discovery endpoints.'},
@@ -156,7 +157,7 @@ def build_openapi_document(app: Any) -> dict[str, Any]:
                 }
             },
         },
-        'components': {'schemas': _components(catalog)},
+        'components': {'securitySchemes': {'bearerAuth': {'type': 'http', 'scheme': 'bearer', 'bearerFormat': 'JWT'}}, 'schemas': _components(catalog)},
     }
 
 

@@ -45,9 +45,6 @@ class SharePointGatewayTests(unittest.TestCase):
     def setUp(self) -> None:
         self.mapper = AssetSpreadsheetMapper()
         self.settings = SharePointSettings(
-            tenant_id='tenant',
-            client_id='client',
-            client_secret='secret',
             site_id='site-1',
             drive_id='drive-1',
             item_id='item-1',
@@ -140,9 +137,6 @@ class SharePointGatewayTests(unittest.TestCase):
 
     def test_resolve_item_id_uses_root_path_addressing_with_trailing_colon(self) -> None:
         settings = SharePointSettings(
-            tenant_id='tenant',
-            client_id='client',
-            client_secret='secret',
             site_id='site-1',
             drive_id='drive-1',
             workbook_path='Shared Documents/inventory.xlsx',
@@ -165,6 +159,40 @@ class SharePointGatewayTests(unittest.TestCase):
     def test_mapper_orders_data_origin_after_sharing_policy(self) -> None:
         headers = list(self.mapper.ordered_headers)
         self.assertGreater(headers.index('Data_Origin'), headers.index('Sharing_Policy'))
+
+
+class GraphApiClientTests(unittest.TestCase):
+    def test_graph_client_uses_delegated_token_provider(self) -> None:
+        from vigilance_assets.sharepoint import GraphApiClient
+
+        calls: list[str] = []
+
+        class _Response:
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *args):
+                return None
+
+            def read(self) -> bytes:
+                return b'{"value": []}'
+
+        def _provider() -> str:
+            calls.append('token')
+            return 'delegated-token'
+
+        captured_headers: dict[str, str] = {}
+
+        def _fake_urlopen(request, timeout=0):
+            captured_headers['Authorization'] = request.get_header('Authorization')
+            return _Response()
+
+        client = GraphApiClient(_provider)
+        with unittest.mock.patch('vigilance_assets.sharepoint.urlopen', side_effect=_fake_urlopen):
+            client.get('/me/drive')
+
+        self.assertEqual(calls, ['token'])
+        self.assertEqual(captured_headers['Authorization'], 'Bearer delegated-token')
 
 
 if __name__ == '__main__':
