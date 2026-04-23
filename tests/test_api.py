@@ -12,6 +12,7 @@ from vigilance_assets import (
     AssetValidator,
     AssetNotFoundError,
     DuplicateAssetError,
+    GoogleSheetsQuotaExceededError,
     InventoryPayload,
     UnsupportedCategoryError,
     UnsupportedVocabularyError,
@@ -174,6 +175,23 @@ class ApiTests(unittest.TestCase):
         self.assertEqual(response.status_code, 405)
         payload = response.get_json()
         self.assertEqual(payload['error']['code'], 'read_only_backend')
+
+    def test_quota_exhaustion_returns_explicit_service_unavailable_error(self) -> None:
+        repository = ApiRepository()
+
+        def raise_quota(_asset):
+            raise GoogleSheetsQuotaExceededError('Google Sheets quota exhausted: read requests per minute per user.')
+
+        repository.create_asset = raise_quota
+        service = AssetService(repository, AssetValidator(repository.catalog), now_provider=now_utc)
+        client = create_app(service).test_client()
+
+        response = client.post('/assets', json=asset_payload('Platform / Service', asset_id='AST-099'))
+
+        self.assertEqual(response.status_code, 503)
+        payload = response.get_json()
+        self.assertEqual(payload['error']['code'], 'upstream_google_sheets_quota_exhausted')
+        self.assertIn('quota exhausted', payload['error']['message'].lower())
 
     def test_patch_assets_returns_machine_readable_validation_errors(self) -> None:
         response = self.client.patch("/assets/AST-001", json={"Asset_ID": "AST-999"})

@@ -11,6 +11,7 @@ from vigilance_assets.config import GoogleSheetsSettings
 from vigilance_assets.google_sheets import (
     GoogleSheetsConfigurationError,
     GoogleSheetsConnectivityError,
+    GoogleSheetsQuotaExceededError,
     GoogleSheetsReadOnlyError,
     GoogleSheetsTableGateway,
     GoogleSheetsWorksheetError,
@@ -201,6 +202,75 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
         self.assertEqual(snapshot.rows[0].values['Asset_ID'], 'AST-001')
         self.assertFalse(gateway.is_read_only)
 
+    def test_load_snapshot_uses_short_ttl_cache_for_metadata_and_rows(self) -> None:
+        values_resource = Mock()
+        values_resource.get.return_value.execute.return_value = {
+            'values': [list(self.mapper.ordered_headers)]
+        }
+        spreadsheets_resource = Mock()
+        spreadsheets_resource.get.return_value.execute.return_value = {
+            'sheets': [{'properties': {'sheetId': 12, 'title': 'Inventory Assets'}}]
+        }
+        spreadsheets_resource.values.return_value = values_resource
+        service = Mock()
+        service.spreadsheets.return_value = spreadsheets_resource
+        gateway = GoogleSheetsTableGateway(
+            settings=self.auth_settings,
+            expected_headers=self.mapper.ordered_headers,
+            api_service=service,
+            metadata_cache_ttl_seconds=30.0,
+            worksheet_snapshot_ttl_seconds=30.0,
+        )
+
+        gateway._load_snapshot('ASSETS')
+        gateway._load_snapshot('ASSETS')
+
+        self.assertEqual(spreadsheets_resource.get.call_count, 1)
+        self.assertEqual(values_resource.get.call_count, 1)
+
+    def test_snapshot_cache_is_invalidated_after_successful_write(self) -> None:
+        gateway = GoogleSheetsTableGateway(settings=self.auth_settings, expected_headers=self.mapper.ordered_headers, api_service=Mock())
+        snapshot = gateway._build_snapshot(
+            sheet_name='Inventory Assets',
+            sheet_id=12,
+            raw_rows=[
+                list(self.mapper.ordered_headers),
+                ['AST-001', 'Threat Radar', 'Cybersecurity Tool'] + [''] * (len(self.mapper.ordered_headers) - 3),
+            ],
+        )
+        gateway._snapshot_cache['Inventory Assets'] = (0.0, snapshot)
+        gateway._metadata_cache['Inventory Assets'] = (0.0, {'properties': {'sheetId': 12, 'title': 'Inventory Assets'}})
+        values_resource = Mock()
+        values_resource.update.return_value.execute.return_value = {}
+        gateway._spreadsheets_values = Mock(return_value=values_resource)
+        gateway._load_snapshot = Mock(return_value=snapshot)
+
+        gateway.update_row('Inventory Assets', 2, {'Asset_ID': 'AST-001', 'Asset_Name': 'Updated', 'Asset_Category': 'Cybersecurity Tool'})
+
+        self.assertNotIn('Inventory Assets', gateway._snapshot_cache)
+        self.assertNotIn('Inventory Assets', gateway._metadata_cache)
+
+    def test_quota_errors_raise_google_sheets_quota_exceeded_error(self) -> None:
+        values_resource = Mock()
+        values_resource.get.return_value.execute.side_effect = HttpError(
+            Response({'status': '429'}),
+            b'{"error":{"code":429,"message":"Quota exceeded for quota metric Read requests per minute per user","status":"RESOURCE_EXHAUSTED"}}',
+        )
+        spreadsheets_resource = Mock()
+        spreadsheets_resource.get.return_value.execute.return_value = {
+            'sheets': [{'properties': {'sheetId': 12, 'title': 'Inventory Assets'}}]
+        }
+        spreadsheets_resource.values.return_value = values_resource
+        service = Mock()
+        service.spreadsheets.return_value = spreadsheets_resource
+        gateway = GoogleSheetsTableGateway(
+            settings=self.auth_settings,
+            expected_headers=self.mapper.ordered_headers,
+            api_service=service,
+        )
+
+        with self.assertRaisesRegex(GoogleSheetsQuotaExceededError, 'quota exhausted'):
+            gateway.validate_connection()
 
     def test_authenticated_metadata_error_includes_google_api_details_and_guidance(self) -> None:
         error_content = b'{"error":{"code":403,"message":"Google Sheets API has not been used in project 123 before or it is disabled.","status":"PERMISSION_DENIED"}}'
@@ -304,17 +374,7 @@ class GoogleSheetsGatewayTests(unittest.TestCase):
         appended_row[1] = 'Fresh Asset'
         appended_row[2] = 'Cybersecurity Tool'
         appended_row[tool_type_index] = 'SIEM (Security Information and Event Management)'
-        appended_snapshot = gateway._build_snapshot(
-            sheet_name='Inventory Assets',
-            sheet_id=12,
-            raw_rows=[
-                ['Decorative groupings'] + [''] * (row_length - 1),
-                actual_header_row,
-                ['AST-001', 'Threat Radar', 'Cybersecurity Tool'] + [''] * (row_length - 3),
-                appended_row,
-            ],
-        )
-        gateway._load_snapshot = Mock(side_effect=[initial_snapshot, appended_snapshot])
+        gateway._load_snapshot = Mock(return_value=initial_snapshot)
         values_resource = Mock()
         values_resource.update.return_value.execute.return_value = {}
         gateway._spreadsheets_values = Mock(return_value=values_resource)

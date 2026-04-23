@@ -5,6 +5,7 @@ import io
 import json
 import re
 import unicodedata
+import time
 from http import HTTPStatus
 from dataclasses import dataclass
 import logging
@@ -96,6 +97,10 @@ class GoogleSheetsConnectivityError(SpreadsheetBackendError):
     """Raised when the Google Sheets backend cannot be reached."""
 
 
+class GoogleSheetsQuotaExceededError(GoogleSheetsConnectivityError):
+    """Raised when Google Sheets API quota is exhausted upstream."""
+
+
 class GoogleSheetsWorksheetError(SpreadsheetBackendError):
     """Raised when a required worksheet or header row is invalid."""
 
@@ -142,6 +147,8 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
     expected_headers: Sequence[str] = ()
     timeout_seconds: float = 20.0
     header_scan_limit: int = 10
+    metadata_cache_ttl_seconds: float = 30.0
+    worksheet_snapshot_ttl_seconds: float = 5.0
     api_service: Any | None = None
 
     def __post_init__(self) -> None:
@@ -159,6 +166,8 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
         }
         self._all_category_headers = set().union(*self._category_headers_by_category.values())
         self._api_service = self.api_service
+        self._metadata_cache: dict[str, tuple[float, dict[str, Any]]] = {}
+        self._snapshot_cache: dict[str, tuple[float, WorksheetSnapshot]] = {}
 
     @property
     def worksheet_name(self) -> str:
@@ -215,13 +224,18 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
                 body=body,
             ).execute()
         except HttpError as exc:
+            error_cls: type[GoogleSheetsConnectivityError] = GoogleSheetsConnectivityError
             message = _format_google_api_error(
                 f"Failed to write row {next_empty_row} through the Google Sheets API.",
                 exc,
             )
+            if self._is_quota_exhaustion_error(exc):
+                error_cls = GoogleSheetsQuotaExceededError
+                message = f"Google Sheets API quota exhausted while writing row {next_empty_row}. {message}"
             LOGGER.exception(message)
-            raise GoogleSheetsConnectivityError(message) from exc
-        return self._find_appended_row(snapshot.sheet_name, values.get("Asset_ID"), appended_row_number=next_empty_row)
+            raise error_cls(message) from exc
+        self._invalidate_sheet_caches(snapshot.sheet_name)
+        return SheetRecord(row_number=next_empty_row, values=dict(values))
 
     def update_row(self, sheet_name: str, row_number: int, values: RowData) -> SheetRecord:
         if self.is_read_only:
@@ -247,12 +261,17 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
                 body={"values": [ordered_values]},
             ).execute()
         except HttpError as exc:
+            error_cls: type[GoogleSheetsConnectivityError] = GoogleSheetsConnectivityError
             message = _format_google_api_error(
                 f"Failed to update row {row_number} through the Google Sheets API.",
                 exc,
             )
+            if self._is_quota_exhaustion_error(exc):
+                error_cls = GoogleSheetsQuotaExceededError
+                message = f"Google Sheets API quota exhausted while updating row {row_number}. {message}"
             LOGGER.exception(message)
-            raise GoogleSheetsConnectivityError(message) from exc
+            raise error_cls(message) from exc
+        self._invalidate_sheet_caches(snapshot.sheet_name)
         return SheetRecord(row_number=row_number, values=dict(values))
 
     def delete_row(self, sheet_name: str, row_number: int) -> None:
@@ -282,12 +301,17 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
                 },
             ).execute()
         except HttpError as exc:
+            error_cls: type[GoogleSheetsConnectivityError] = GoogleSheetsConnectivityError
             message = _format_google_api_error(
                 f"Failed to delete row {row_number} through the Google Sheets API.",
                 exc,
             )
+            if self._is_quota_exhaustion_error(exc):
+                error_cls = GoogleSheetsQuotaExceededError
+                message = f"Google Sheets API quota exhausted while deleting row {row_number}. {message}"
             LOGGER.exception(message)
-            raise GoogleSheetsConnectivityError(message) from exc
+            raise error_cls(message) from exc
+        self._invalidate_sheet_caches(snapshot.sheet_name)
 
     def validate_connection(self) -> WorksheetSnapshot:
         snapshot = self._load_snapshot(self.worksheet_name)
@@ -301,34 +325,49 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
 
     def _load_snapshot(self, sheet_name: str) -> WorksheetSnapshot:
         resolved_sheet_name = self._resolve_sheet_name(sheet_name)
+        cached_snapshot = self._snapshot_cache.get(resolved_sheet_name)
+        if cached_snapshot and self._is_cache_entry_fresh(cached_snapshot[0], self.worksheet_snapshot_ttl_seconds):
+            return cached_snapshot[1]
         if self.is_read_only:
             raw_rows = self._fetch_public_rows(resolved_sheet_name)
-            return self._build_snapshot(sheet_name=resolved_sheet_name, sheet_id=None, raw_rows=raw_rows)
+            snapshot = self._build_snapshot(sheet_name=resolved_sheet_name, sheet_id=None, raw_rows=raw_rows)
+            self._snapshot_cache[resolved_sheet_name] = (time.monotonic(), snapshot)
+            return snapshot
 
         metadata = self._fetch_authenticated_sheet_metadata(resolved_sheet_name)
         raw_rows = self._fetch_authenticated_rows(resolved_sheet_name)
-        return self._build_snapshot(
+        snapshot = self._build_snapshot(
             sheet_name=resolved_sheet_name,
             sheet_id=metadata["properties"]["sheetId"],
             raw_rows=raw_rows,
         )
+        self._snapshot_cache[resolved_sheet_name] = (time.monotonic(), snapshot)
+        return snapshot
 
     def _fetch_authenticated_sheet_metadata(self, sheet_name: str) -> dict[str, Any]:
+        cached_metadata = self._metadata_cache.get(sheet_name)
+        if cached_metadata and self._is_cache_entry_fresh(cached_metadata[0], self.metadata_cache_ttl_seconds):
+            return cached_metadata[1]
         try:
             response = self._spreadsheets().get(
                 spreadsheetId=self.settings.spreadsheet_id,
                 fields="sheets(properties(sheetId,title))",
             ).execute()
         except HttpError as exc:
+            error_cls: type[GoogleSheetsConnectivityError] = GoogleSheetsConnectivityError
             message = _format_google_api_error(
                 "Failed to load spreadsheet metadata from the Google Sheets API.",
                 exc,
             )
+            if self._is_quota_exhaustion_error(exc):
+                error_cls = GoogleSheetsQuotaExceededError
+                message = f"Google Sheets API quota exhausted while loading spreadsheet metadata. {message}"
             LOGGER.exception(message)
-            raise GoogleSheetsConnectivityError(message) from exc
+            raise error_cls(message) from exc
         for sheet in response.get("sheets", []):
             properties = sheet.get("properties", {})
             if properties.get("title") == sheet_name:
+                self._metadata_cache[sheet_name] = (time.monotonic(), sheet)
                 return sheet
         raise GoogleSheetsWorksheetError(
             f"Worksheet {sheet_name!r} was not found in the target spreadsheet."
@@ -342,12 +381,16 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
                 majorDimension="ROWS",
             ).execute()
         except HttpError as exc:
+            error_cls: type[GoogleSheetsConnectivityError] = GoogleSheetsConnectivityError
             message = _format_google_api_error(
                 f"Failed to read worksheet {sheet_name!r} through the Google Sheets API.",
                 exc,
             )
+            if self._is_quota_exhaustion_error(exc):
+                error_cls = GoogleSheetsQuotaExceededError
+                message = f"Google Sheets API quota exhausted while reading worksheet {sheet_name!r}. {message}"
             LOGGER.exception(message)
-            raise GoogleSheetsConnectivityError(message) from exc
+            raise error_cls(message) from exc
         rows = [list(row) for row in response.get("values", [])]
         if not rows:
             raise GoogleSheetsWorksheetError(
@@ -680,6 +723,24 @@ class GoogleSheetsTableGateway(SpreadsheetTableGateway):
         if value is None:
             return ""
         return value
+
+    @staticmethod
+    def _is_cache_entry_fresh(loaded_at: float, ttl_seconds: float) -> bool:
+        if ttl_seconds <= 0:
+            return False
+        return (time.monotonic() - loaded_at) < ttl_seconds
+
+    def _invalidate_sheet_caches(self, sheet_name: str) -> None:
+        self._snapshot_cache.pop(sheet_name, None)
+        self._metadata_cache.pop(sheet_name, None)
+
+    @staticmethod
+    def _is_quota_exhaustion_error(exc: HttpError) -> bool:
+        status = getattr(getattr(exc, "resp", None), "status", None)
+        if status == 429:
+            return True
+        details = _extract_google_api_error_details(exc).casefold()
+        return status in {403, 429} and "quota" in details
 
 
 def _load_service_account_credentials(settings: GoogleSheetsSettings) -> Credentials:

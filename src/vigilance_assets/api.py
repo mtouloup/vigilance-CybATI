@@ -5,6 +5,7 @@ from typing import Any
 from flask import Flask, send_from_directory
 
 from .blueprints import assets_bp, error_response, schema_bp, vocabularies_bp
+from .google_sheets import GoogleSheetsQuotaExceededError
 from .openapi import openapi_bp
 from .repository import (
     AssetNotFoundError,
@@ -67,6 +68,14 @@ def create_app(service: AssetService | None = None, *, repository: AssetReposito
     @app.errorhandler(ReadOnlyRepositoryError)
     def handle_read_only_repository(error: ReadOnlyRepositoryError) -> Any:
         return error_response(status=405, code='read_only_backend', message=str(error))
+
+    @app.errorhandler(GoogleSheetsQuotaExceededError)
+    def handle_google_sheets_quota_exhausted(error: GoogleSheetsQuotaExceededError) -> Any:
+        return error_response(
+            status=503,
+            code='upstream_google_sheets_quota_exhausted',
+            message=str(error),
+        )
 
     @app.errorhandler(RepositoryError)
     def handle_repository_error(error: RepositoryError) -> Any:
