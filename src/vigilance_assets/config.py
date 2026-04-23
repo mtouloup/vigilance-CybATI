@@ -2,12 +2,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
-from typing import Literal, Mapping
+from typing import Mapping
 
 
 ENV_PREFIX = "VIGILANCE_"
 DEFAULT_ASSETS_WORKSHEET = "ASSETS"
-DEFAULT_STORAGE_BACKEND = "google_sheets"
 
 
 class ConfigurationError(ValueError):
@@ -45,82 +44,23 @@ class GoogleSheetsSettings:
 
 
 @dataclass(frozen=True, slots=True)
-class SharePointSettings:
-    tenant_id: str
-    client_id: str
-    client_secret: str
-    worksheet_name: str = DEFAULT_ASSETS_WORKSHEET
-    site_id: str | None = None
-    site_url: str | None = None
-    drive_id: str | None = None
-    item_id: str | None = None
-    workbook_path: str | None = None
-
-    def validate(self) -> None:
-        if not self.tenant_id:
-            raise ConfigurationError("VIGILANCE_SHAREPOINT_TENANT_ID must be set.")
-        if not self.client_id:
-            raise ConfigurationError("VIGILANCE_SHAREPOINT_CLIENT_ID must be set.")
-        if not self.client_secret:
-            raise ConfigurationError("VIGILANCE_SHAREPOINT_CLIENT_SECRET must be set.")
-        if not self.worksheet_name:
-            raise ConfigurationError("VIGILANCE_SHAREPOINT_WORKSHEET_NAME must be set.")
-        if not self.site_id and not self.site_url:
-            raise ConfigurationError("Set either VIGILANCE_SHAREPOINT_SITE_ID or VIGILANCE_SHAREPOINT_SITE_URL.")
-        if self.site_id and self.site_url:
-            raise ConfigurationError("Set only one of VIGILANCE_SHAREPOINT_SITE_ID or VIGILANCE_SHAREPOINT_SITE_URL.")
-        if not self.item_id and not self.workbook_path:
-            raise ConfigurationError("Set either VIGILANCE_SHAREPOINT_ITEM_ID or VIGILANCE_SHAREPOINT_WORKBOOK_PATH.")
-        if self.item_id and self.workbook_path:
-            raise ConfigurationError("Set only one of VIGILANCE_SHAREPOINT_ITEM_ID or VIGILANCE_SHAREPOINT_WORKBOOK_PATH.")
-
-
-@dataclass(frozen=True, slots=True)
 class AppRuntimeSettings:
-    storage_backend: Literal["google_sheets", "sharepoint"] = DEFAULT_STORAGE_BACKEND
-    google_sheets: GoogleSheetsSettings | None = None
-    sharepoint: SharePointSettings | None = None
+    google_sheets: GoogleSheetsSettings
 
     def validate(self) -> None:
-        if self.storage_backend == "google_sheets":
-            if self.google_sheets is None:
-                raise ConfigurationError("Google Sheets backend selected but Google settings are not configured.")
-            self.google_sheets.validate()
-            return
-        if self.storage_backend == "sharepoint":
-            if self.sharepoint is None:
-                raise ConfigurationError("SharePoint backend selected but SharePoint settings are not configured.")
-            self.sharepoint.validate()
-            return
-        raise ConfigurationError(
-            f"Unsupported VIGILANCE_STORAGE_BACKEND value: {self.storage_backend}. "
-            "Supported values: google_sheets, sharepoint."
-        )
+        self.google_sheets.validate()
 
 
 def load_runtime_settings(env: Mapping[str, str] | None = None) -> AppRuntimeSettings:
     values = env if env is not None else os.environ
-    storage_backend = _read_str(values, "STORAGE_BACKEND", default=DEFAULT_STORAGE_BACKEND).lower()
     settings = AppRuntimeSettings(
-        storage_backend=storage_backend,  # type: ignore[arg-type]
         google_sheets=GoogleSheetsSettings(
             spreadsheet_id=_read_optional_str(values, "GOOGLE_SPREADSHEET_ID") or "",
             worksheet_name=_read_str(values, "GOOGLE_WORKSHEET_NAME", default=DEFAULT_ASSETS_WORKSHEET),
             service_account_file=_read_optional_str(values, "GOOGLE_SERVICE_ACCOUNT_FILE"),
             service_account_json=_read_optional_str(values, "GOOGLE_SERVICE_ACCOUNT_JSON"),
             read_only_public_fallback=_read_bool(values, "GOOGLE_READ_ONLY_PUBLIC", default=False),
-        ),
-        sharepoint=SharePointSettings(
-            tenant_id=_read_optional_str(values, "SHAREPOINT_TENANT_ID") or "",
-            client_id=_read_optional_str(values, "SHAREPOINT_CLIENT_ID") or "",
-            client_secret=_read_optional_str(values, "SHAREPOINT_CLIENT_SECRET") or "",
-            worksheet_name=_read_str(values, "SHAREPOINT_WORKSHEET_NAME", default=DEFAULT_ASSETS_WORKSHEET),
-            site_id=_read_optional_str(values, "SHAREPOINT_SITE_ID"),
-            site_url=_read_optional_str(values, "SHAREPOINT_SITE_URL"),
-            drive_id=_read_optional_str(values, "SHAREPOINT_DRIVE_ID"),
-            item_id=_read_optional_str(values, "SHAREPOINT_ITEM_ID"),
-            workbook_path=_read_optional_str(values, "SHAREPOINT_WORKBOOK_PATH"),
-        ),
+        )
     )
     settings.validate()
     return settings
@@ -136,13 +76,6 @@ def _read_optional_str(env: Mapping[str, str], name: str) -> str | None:
         return None
     normalized = value.strip()
     return normalized or None
-
-
-def _read_required_str(env: Mapping[str, str], name: str) -> str:
-    value = _read_optional_str(env, name)
-    if value is None:
-        raise ConfigurationError(f"{_env_name(name)} must be set.")
-    return value
 
 
 def _read_str(env: Mapping[str, str], name: str, *, default: str) -> str:
