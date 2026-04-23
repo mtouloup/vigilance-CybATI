@@ -11,6 +11,7 @@ from .config import (
 from .google_sheets import (
     GoogleSheetsConfigurationError,
     GoogleSheetsConnectivityError,
+    GoogleSheetsQuotaExceededError,
     GoogleSheetsReadOnlyError,
     GoogleSheetsTableGateway,
     GoogleSheetsWorksheetError,
@@ -81,6 +82,7 @@ __all__ = [
     "DuplicateAssetError",
     "GoogleSheetsConfigurationError",
     "GoogleSheetsConnectivityError",
+    "GoogleSheetsQuotaExceededError",
     "GoogleSheetsReadOnlyError",
     "GoogleSheetsSettings",
     "GoogleSheetsTableGateway",
