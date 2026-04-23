@@ -245,6 +245,8 @@ Suggested minimum category-specific requirement:
 ## Category: `Data Stream / Data Source / Telemetry`
 
 These fields apply only when `Asset_Category = Data Stream / Data Source / Telemetry`.
+Canonical telemetry field order in the worksheet/API mapping:
+`Telemetry_Type`, `Data_Format`, `Frequency`, `Data_Sensitivity`, `Sharing_Policy`, `Data_Origin`.
 
 ### `Telemetry_Type`
 Type of telemetry or data source. No controlled vocabulary is currently defined in the workbook.
@@ -266,6 +268,14 @@ Current controlled values:
 - `Restricted`
 - `Confidential`
 - `N/A`
+
+### `Data_Origin`
+Telemetry/data provenance origin classification.
+
+Current controlled values:
+- `Real-world`
+- `Synthetic / Simulated`
+- `Hybrid`
 
 Suggested minimum category-specific requirement:
 - `Telemetry_Type`
