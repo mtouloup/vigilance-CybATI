@@ -19,7 +19,10 @@
       "max": 9
     },
     "documentation_link_format": "url",
-    "last_updated_formats": ["date", "datetime"],
+    "last_updated_formats": [
+      "date",
+      "datetime"
+    ],
     "category_specific_exclusivity": true
   },
   "vocabularies": {
@@ -114,6 +117,11 @@
       "Restricted",
       "Confidential",
       "N/A"
+    ],
+    "Data_Origin": [
+      "Real-world",
+      "Synthetic / Simulated",
+      "Hybrid"
     ]
   },
   "common_fields": [
@@ -562,6 +570,19 @@
         "nullable": true,
         "enum_ref": "Sharing_Policy",
         "description": "Sharing policy for the data."
+      },
+      {
+        "name": "Data_Origin",
+        "sheet_header": "Data_Origin",
+        "required": false,
+        "nullable": true,
+        "description": "Source provenance of the telemetry data stream.",
+        "enum_ref": "Data_Origin",
+        "filterable": true,
+        "sortable": false,
+        "searchable": false,
+        "updatable": true,
+        "type": "string"
       }
     ],
     "Data Store / Message Backbone": [

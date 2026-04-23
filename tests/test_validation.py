@@ -33,6 +33,18 @@ class AssetValidatorTests(unittest.TestCase):
             self.validator.validate_for_create(payload)
         self.assertTrue(any(issue.field == "Status" and issue.code == "invalid_choice" for issue in exc.exception.issues))
 
+    def test_rejects_invalid_data_origin_for_telemetry_assets(self) -> None:
+        payload = asset_payload("Data Stream / Data Source / Telemetry", Data_Origin="Generated")
+        with self.assertRaises(ValidationError) as exc:
+            self.validator.validate_for_create(payload)
+        self.assertTrue(any(issue.field == "Data_Origin" and issue.code == "invalid_choice" for issue in exc.exception.issues))
+
+    def test_rejects_data_origin_for_non_telemetry_assets(self) -> None:
+        payload = asset_payload("Cybersecurity Tool", Data_Origin="Real-world")
+        with self.assertRaises(ValidationError) as exc:
+            self.validator.validate_for_create(payload)
+        self.assertTrue(any(issue.field == "Data_Origin" and issue.code == "category_exclusive" for issue in exc.exception.issues))
+
     def test_rejects_trl_out_of_range(self) -> None:
         payload = asset_payload("Compute Resource", TRL_Start=10)
         with self.assertRaises(ValidationError) as exc:
